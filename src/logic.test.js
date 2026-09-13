@@ -119,10 +119,20 @@ describe("setLabel / setScore — cardio and AMRAP/EMOM schemes", () => {
     expect(setScore(set, barbell("thr", "Thruster"), "lb")).toBeCloseTo(10.7, 1);
   });
 
+  it("includes the prescribed weight in an AMRAP label when one was logged", () => {
+    const set = { scheme: "amrap", capMinutes: 20, totalReps: 214, weight: 95, unit: "lb" };
+    expect(setLabel(set, barbell("thr", "Thruster"), "lb")).toBe("214 reps in 20:00 AMRAP @ 95lb");
+  });
+
   it("labels and scores an EMOM set, noting missed rounds", () => {
     const set = { scheme: "emom", intervalMinutes: 1, totalIntervals: 8, repsPerInterval: 10, missedIntervals: 1 };
     expect(setLabel(set, barbell("kb", "KB Swing"), "lb")).toBe("10/rd × 8 EMOM · missed 1");
     expect(setScore(set, barbell("kb", "KB Swing"), "lb")).toBe(70); // (8-1)*10
+  });
+
+  it("includes the prescribed weight in an EMOM label when one was logged", () => {
+    const set = { scheme: "emom", intervalMinutes: 1, totalIntervals: 8, repsPerInterval: 10, weight: 53, unit: "lb" };
+    expect(setLabel(set, barbell("kb", "KB Swing"), "lb")).toBe("10/rd × 8 EMOM @ 53lb");
   });
 
   it("excludes cardio and non-straight sets from the 1RM fit", () => {

@@ -217,10 +217,12 @@ export function setLabel(set, ex, unit) {
   const mode = ex?.mode || "barbell";
   const scheme = set.scheme || "straight";
 
-  if (scheme === "amrap") return `${set.totalReps || 0} reps in ${mmss((set.capMinutes || 0) * 60)} AMRAP`;
-  if (scheme === "emom") {
+  if (scheme === "amrap" || scheme === "emom") {
+    const w = wIn(set, unit);
+    const atWeight = w > 0 ? ` @ ${w}${unit}` : "";
+    if (scheme === "amrap") return `${set.totalReps || 0} reps in ${mmss((set.capMinutes || 0) * 60)} AMRAP${atWeight}`;
     const missed = set.missedIntervals ? ` · missed ${set.missedIntervals}` : "";
-    return `${set.repsPerInterval || 0}/rd × ${set.totalIntervals || 0} EMOM${missed}`;
+    return `${set.repsPerInterval || 0}/rd × ${set.totalIntervals || 0} EMOM${atWeight}${missed}`;
   }
   if (mode === "cardio") {
     const dist = set.distance || 0, secs = set.seconds || 0;

@@ -538,9 +538,9 @@ export default function SwolleyMammoths() {
     };
     let set;
     if (scheme === "amrap") {
-      set = { ...base, weight: 0, reps: 0, seconds: capMinutes * 60, capMinutes, totalReps };
+      set = { ...base, weight, reps: 0, seconds: capMinutes * 60, capMinutes, totalReps };
     } else if (scheme === "emom") {
-      set = { ...base, weight: 0, reps: 0, seconds: intervalMinutes * 60 * totalIntervals,
+      set = { ...base, weight, reps: 0, seconds: intervalMinutes * 60 * totalIntervals,
         intervalMinutes, totalIntervals, repsPerInterval, missedIntervals };
     } else if (mode === "cardio") {
       set = { ...base, weight: 0, reps: 0, distance, seconds, heartRate: heartRate === "" ? null : Number(heartRate) };
@@ -744,10 +744,15 @@ export default function SwolleyMammoths() {
             )}
 
             {scheme === "amrap" ? (
-              <div className="entry__steppers">
-                <Stepper label="Cap" value={capMinutes} onChange={setCapMinutes} step={1} min={1} suffix="min" />
-                <Stepper label="Total reps" value={totalReps} onChange={setTotalReps} step={1} min={0} />
-              </div>
+              <>
+                <div className="entry__steppers">
+                  <Stepper label="Cap" value={capMinutes} onChange={setCapMinutes} step={1} min={1} suffix="min" />
+                  <Stepper label="Total reps" value={totalReps} onChange={setTotalReps} step={1} min={0} />
+                </div>
+                <div className="entry__steppers entry__steppers--sub">
+                  <Stepper label="Weight" value={weight} onChange={setWeight} step={spec.step} min={0} suffix={unit} />
+                </div>
+              </>
             ) : scheme === "emom" ? (
               <>
                 <div className="entry__steppers">
@@ -756,6 +761,7 @@ export default function SwolleyMammoths() {
                   <Stepper label="Reps/rd" value={repsPerInterval} onChange={setRepsPerInterval} step={1} min={0} />
                 </div>
                 <div className="entry__steppers entry__steppers--sub">
+                  <Stepper label="Weight" value={weight} onChange={setWeight} step={spec.step} min={0} suffix={unit} />
                   <Stepper label="Missed" value={missedIntervals} onChange={setMissedIntervals} step={1} min={0} />
                 </div>
               </>
