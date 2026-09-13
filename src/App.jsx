@@ -1,274 +1,25 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
+import {
+  MODES, CAPABILITIES, GOAL_TEMPLATES, PLATE_SPEC,
+  epley, round1, uid, convert, wIn, mmss, todayKey, prettyDate, daysAgo,
+  platesPerSide, setLabel, setScore, isCounted, estimate1RM, bestScore,
+  seed, currentBodyweight, migrate,
+  canArmTarget, pace, bodyweightAdjustedStrength, coachInsights,
+  goalVerdict, evaluatePlanOnSave, balancedScorecard, rankedChanges,
+  describeCapabilities, mostTrainedExercise, topVerdict,
+} from "./logic.js";
 
 /* ============================================================
-   SWOLLEY MAMMOTHS — Phase 2
-   Adds: exercise modes, workout plans, mid-session swapping,
-   per-set notes, and a full last-session comparison.
+   SWOLLEY MAMMOTHS — Phase 4
+   The Coach evaluation engine: plan-aware goal verdicts, plan-save
+   critique, and a balanced scorecard. All of the math lives in
+   src/logic.js as pure functions — this file is UI and storage only.
    ============================================================ */
 
 const KEY = "swolleymammoths:v2";
 const LEGACY_KEYS = ["swolleymammoths:v1", "ironledger:v1"];
 
-/* mode decides which fields you're asked for, and how a set reads back */
-const MODES = {
-  barbell: { label: "Barbell", fields: ["weight", "reps"], strip: true },
-  dumbbell: { label: "Dumbbell", fields: ["weight", "reps"], perHand: true },
-  machine: { label: "Machine", fields: ["weight", "reps"] },
-  bodyweight: { label: "Bodyweight", fields: ["added", "reps"] },
-  timed: { label: "Timed / carry", fields: ["weight", "seconds"] },
-};
-
-const SEED_EXERCISES = [
-  { id: "e1", name: "Back Squat", group: "Legs", mode: "barbell" },
-  { id: "e2", name: "Bench Press", group: "Push", mode: "barbell" },
-  { id: "e3", name: "Deadlift", group: "Pull", mode: "barbell" },
-  { id: "e4", name: "Overhead Press", group: "Push", mode: "barbell" },
-  { id: "e5", name: "Barbell Row", group: "Pull", mode: "barbell" },
-  { id: "e6", name: "Romanian Deadlift", group: "Legs", mode: "barbell" },
-  { id: "e7", name: "Incline Dumbbell Press", group: "Push", mode: "dumbbell" },
-  { id: "e8", name: "Dumbbell Row", group: "Pull", mode: "dumbbell" },
-  { id: "e9", name: "Pull-Up", group: "Pull", mode: "bodyweight" },
-  { id: "e10", name: "Dip", group: "Push", mode: "bodyweight" },
-  { id: "e11", name: "Push-Up", group: "Push", mode: "bodyweight" },
-  { id: "e12", name: "Lat Pulldown", group: "Pull", mode: "machine" },
-  { id: "e13", name: "Leg Press", group: "Legs", mode: "machine" },
-  { id: "e14", name: "Leg Curl", group: "Legs", mode: "machine" },
-  { id: "e15", name: "Cable Fly", group: "Push", mode: "machine" },
-  { id: "e16", name: "Farmer Carry", group: "Legs", mode: "timed" },
-  { id: "e17", name: "Plank", group: "Core", mode: "timed" },
-];
-
-const SEED_PLANS = [
-  { id: "p1", name: "Push Day", items: [
-    { exerciseId: "e2", note: "touch and go, no pause", sets: 4, reps: 5 },
-    { exerciseId: "e4", note: "", sets: 3, reps: 8 },
-    { exerciseId: "e7", note: "30° bench", sets: 3, reps: 10 },
-    { exerciseId: "e10", note: "lean forward for chest", sets: 3, reps: 12 },
-  ]},
-  { id: "p2", name: "Pull Day", items: [
-    { exerciseId: "e3", note: "", sets: 3, reps: 5 },
-    { exerciseId: "e9", note: "dead hang each rep", sets: 4, reps: 8 },
-    { exerciseId: "e5", note: "", sets: 3, reps: 8 },
-    { exerciseId: "e8", note: "", sets: 3, reps: 12 },
-  ]},
-  { id: "p3", name: "Leg Day", items: [
-    { exerciseId: "e1", note: "high bar, below parallel", sets: 4, reps: 5 },
-    { exerciseId: "e6", note: "", sets: 3, reps: 8 },
-    { exerciseId: "e13", note: "", sets: 3, reps: 12 },
-    { exerciseId: "e14", note: "", sets: 3, reps: 15 },
-  ]},
-];
-
-const PLATE_SPEC = {
-  lb: { bar: 45, step: 5, plates: [
-    { w: 45, color: "#2C5FA8", h: 100, wd: 15 },
-    { w: 35, color: "#D9A521", h: 88, wd: 13 },
-    { w: 25, color: "#3A7D53", h: 76, wd: 11 },
-    { w: 10, color: "#C8322E", h: 56, wd: 9 },
-    { w: 5, color: "#7E848E", h: 44, wd: 8 },
-    { w: 2.5, color: "#EDE8E0", h: 34, wd: 6 },
-  ]},
-  kg: { bar: 20, step: 2.5, plates: [
-    { w: 25, color: "#C8322E", h: 100, wd: 15 },
-    { w: 20, color: "#2C5FA8", h: 100, wd: 13 },
-    { w: 15, color: "#D9A521", h: 100, wd: 11 },
-    { w: 10, color: "#3A7D53", h: 100, wd: 9 },
-    { w: 5, color: "#EDE8E0", h: 72, wd: 8 },
-    { w: 2.5, color: "#7E848E", h: 56, wd: 6 },
-    { w: 1.25, color: "#4A4F58", h: 44, wd: 5 },
-  ]},
-};
-
-/* ---------- pure helpers ---------- */
-
-const epley = (w, r) => (r <= 1 ? w : w * (1 + r / 30));
-const round1 = (n) => Math.round(n * 10) / 10;
-const uid = () => Math.random().toString(36).slice(2, 10);
-const LB_PER_KG = 2.2046226218;
-
-const convert = (w, from, to) =>
-  from === to ? w : to === "kg" ? w / LB_PER_KG : w * LB_PER_KG;
-
-/* a stored set's weight, expressed in the unit currently on screen */
-const wIn = (set, unit) => round1(convert(set.weight || 0, set.unit || "lb", unit));
-
-const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
-
-function todayKey(d = new Date()) {
-  const p = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-}
-
-function prettyDate(key) {
-  const [y, m, d] = key.split("-").map(Number);
-  const dt = new Date(y, m - 1, d);
-  const days = ["SUN","MON","TUE","WED","THU","FRI","SAT"];
-  const mons = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
-  return `${days[dt.getDay()]} ${String(d).padStart(2, "0")} ${mons[m - 1]}`;
-}
-
-function daysAgo(key) {
-  const [y, m, d] = key.split("-").map(Number);
-  const diff = Math.round((new Date() - new Date(y, m - 1, d)) / 86400000);
-  if (diff <= 0) return "today";
-  if (diff === 1) return "yesterday";
-  if (diff < 14) return `${diff}d ago`;
-  return `${Math.round(diff / 7)}w ago`;
-}
-
-function platesPerSide(total, unit) {
-  const spec = PLATE_SPEC[unit];
-  let rem = (total - spec.bar) / 2;
-  if (rem < 0) return { plates: [], leftover: 0, under: true };
-  const out = [];
-  for (const p of spec.plates) {
-    while (rem >= p.w - 1e-9 && out.length < 14) { out.push(p); rem -= p.w; }
-  }
-  return { plates: out, leftover: round1(rem), under: false };
-}
-
-/* how a single set reads on screen, given its exercise mode */
-function setLabel(set, ex, unit) {
-  const mode = ex?.mode || "barbell";
-  if (mode === "timed") {
-    const w = wIn(set, unit);
-    return w > 0 ? `${w}${unit} · ${mmss(set.seconds || 0)}` : mmss(set.seconds || 0);
-  }
-  if (mode === "bodyweight") {
-    const added = wIn(set, unit);
-    return added > 0 ? `BW+${added} × ${set.reps}` : `BW × ${set.reps}`;
-  }
-  return `${wIn(set, unit)} × ${set.reps}`;
-}
-
-/* one comparable number per set, so trends work across modes */
-function setScore(set, ex, unit, bodyweight) {
-  const mode = ex?.mode || "barbell";
-  if (mode === "timed") return set.seconds || 0;
-  if (mode === "bodyweight") return epley((bodyweight || 0) + wIn(set, unit), set.reps);
-  return epley(wIn(set, unit), set.reps);
-}
-
-/* ---------- 1RM from every set you have logged ----------
-   A single set gives one point. Epley then guesses the rest of the curve
-   with a fixed 3.3%-per-rep decay that isn't true for everyone.
-   Instead: put EVERY set on the chart, weight each by how much it can be
-   trusted, fit a weighted line, and read it off at one rep. ---------- */
-
-/* reps this set would have reached at failure */
-const effectiveReps = (s) => (s.reps || 0) + (s.rir == null ? 0 : s.rir);
-
-/* every set, scored for how much it should count toward the fit */
-function weightedSets(workouts, ex, unit, bodyweight, sinceDays = 120) {
-  if (!ex || ex.mode === "timed") return [];
-  const now = Date.now();
-  const raw = [];
-  workouts.forEach((w) =>
-    w.sets.forEach((st) => {
-      if (st.exerciseId !== ex.id) return;
-      const reps = effectiveReps(st);
-      if (reps < 1 || reps > 12) return;          // the linear fit breaks past ~12
-      const load = (ex.mode === "bodyweight" ? bodyweight || 0 : 0) + wIn(st, unit);
-      if (load <= 0) return;
-      const age = st.ts ? (now - st.ts) / 86400000 : 0;
-      if (age > sinceDays) return;
-      raw.push({ reps, load, age, rir: st.rir, date: w.date, implied: epley(load, reps) });
-    })
-  );
-  if (!raw.length) return [];
-
-  const peak = Math.max(...raw.map((p) => p.implied));
-  return raw
-    .map((p) => {
-      // warmups and back-off sets sit well below your peak effort — taper them out
-      const rel = p.implied / peak;
-      const quality = Math.max(0, Math.min(1, (rel - 0.8) / 0.2)) ** 2;
-      const recency = 0.5 ** (p.age / 45);        // 45-day half life
-      const effort = p.rir == null ? 0.6 : 1;     // untagged sets are less trustworthy
-      return { ...p, w: quality * recency * effort };
-    })
-    .filter((p) => p.w > 0.01)
-    .sort((x, y) => x.reps - y.reps);
-}
-
-/* weighted least squares through all of them */
-function fit1RM(points) {
-  if (!points || !points.length) return null;
-  const best = points.reduce((a, b) => (b.implied > a.implied ? b : a));
-  const epleyEst = best.implied;
-  const fallback = {
-    est: epleyEst, lo: epleyEst * 0.95, hi: epleyEst * 1.05,
-    method: "epley", n: points.length, epleyEst, points,
-    assumed: points.some((p) => p.rir == null),
-  };
-
-  const SW = points.reduce((a, p) => a + p.w, 0);
-  const mr = points.reduce((a, p) => a + p.w * p.reps, 0) / SW;
-  const ml = points.reduce((a, p) => a + p.w * p.load, 0) / SW;
-  let Sxx = 0, Sxy = 0;
-  points.forEach((p) => {
-    Sxx += p.w * (p.reps - mr) ** 2;
-    Sxy += p.w * (p.reps - mr) * (p.load - ml);
-  });
-  // no rep-range variety, or load rising with reps: nothing to fit
-  if (Sxx < 1e-9 || Sxy >= 0 || !isFinite(Sxy / Sxx)) return fallback;
-
-  const b = Sxy / Sxx, a = ml - b * mr, est = a + b;
-  if (!isFinite(est) || est <= 0) return fallback;
-
-  const sse = points.reduce((x, p) => x + p.w * (p.load - (a + b * p.reps)) ** 2, 0);
-  const sst = points.reduce((x, p) => x + p.w * (p.load - ml) ** 2, 0);
-  const nEff = SW ** 2 / points.reduce((x, p) => x + p.w ** 2, 0);
-  const s2 = sse / Math.max(1, nEff - 2);
-  const se = Math.sqrt(Math.max(0, s2 * (1 / SW + (1 - mr) ** 2 / Sxx)));
-  const width = Math.max(est * 0.025, 1.96 * se);
-
-  return {
-    est, a, b, lo: est - width, hi: est + width,
-    r2: sst > 0 ? Math.max(0, 1 - sse / sst) : 1,
-    n: points.length, nEff, dropPerRep: -b / est,
-    method: "fit", epleyEst, points,
-    assumed: points.some((p) => p.rir == null),
-  };
-}
-
-/* ---------- persistence ---------- */
-
-function seed() {
-  return {
-    exercises: SEED_EXERCISES, plans: SEED_PLANS, workouts: [],
-    unit: "lb", bodyweight: 0, bodyweightLog: [],
-  };
-}
-
-/* most recent bodyweight, in the unit currently on screen */
-function currentBodyweight(data, unit) {
-  const log = data.bodyweightLog || [];
-  if (!log.length) return data.bodyweight || 0;
-  const latest = log.slice().sort((a, b) => (a.date < b.date ? 1 : -1))[0];
-  return round1(convert(latest.weight, latest.unit || "lb", unit));
-}
-
-function migrate(data) {
-  if (!data) return null;
-  const unitFallback = data.unit || "lb";
-  return {
-    ...seed(),
-    ...data,
-    exercises: (data.exercises || SEED_EXERCISES).map((e) => ({
-      // v1 stored a boolean `bar`; translate it into the new mode field
-      mode: e.mode || (e.bar === false ? "machine" : "barbell"),
-      ...e,
-    })),
-    plans: data.plans || SEED_PLANS,
-    bodyweightLog: data.bodyweightLog || [],
-    workouts: (data.workouts || []).map((w) => ({
-      queue: [], planName: "Freestyle",
-      ...w,
-      sets: w.sets.map((s) => ({ unit: unitFallback, note: "", seconds: 0, ...s })),
-    })),
-  };
-}
+/* ---------- the only two functions that touch storage ---------- */
 
 function loadData() {
   try {
@@ -404,10 +155,9 @@ function ProfileChart({ fit }) {
 
 /* ---------- exercise picker, reused for choose / add / swap ---------- */
 
-function Picker({ data, picker, onPick, onClose, newName, setNewName, newMode, setNewMode, addExercise }) {
+function Picker({ data, picker, onPick, onClose, newName, setNewName, newMode, setNewMode, newCap, setNewCap, addExercise }) {
   const [q, setQ] = useState("");
   const list = data.exercises.filter((e) => e.name.toLowerCase().includes(q.toLowerCase()));
-  // when swapping, float same-muscle-group options to the top
   const sorted = picker.group
     ? [...list].sort((a, b) => (b.group === picker.group) - (a.group === picker.group))
     : list;
@@ -438,8 +188,129 @@ function Picker({ data, picker, onPick, onClose, newName, setNewName, newMode, s
           <select className="sheet__sel" value={newMode} onChange={(e) => setNewMode(e.target.value)}>
             {Object.entries(MODES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
           </select>
+          <select className="sheet__sel" value={newCap} onChange={(e) => setNewCap(e.target.value)}>
+            <option value="">no pattern</option>
+            {Object.entries(CAPABILITIES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
           <button className="sheet__addb" onClick={addExercise}>Add</button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- Coach: verdict card + goal creation/arming ---------- */
+
+function VerdictCard({ verdict, onArm, canArm }) {
+  const { goal, status, headline, pace: p } = verdict;
+  return (
+    <div className={`verdict verdict--${status}`}>
+      <div className="verdict__top">
+        <span className={`verdict__dot verdict__dot--${status}`} aria-hidden="true" />
+        <span className="verdict__label">{goal.label}</span>
+      </div>
+      <div className="verdict__headline">{headline}</div>
+      {p && p.gap != null && p.outcome == null && (
+        <div className="verdict__num">
+          {p.onPace
+            ? `${round1(p.current)} now · ${round1(p.requiredPerWeekNow)}/wk keeps it`
+            : `behind by ${round1(Math.abs(p.gap))} · need ${round1(Math.abs(p.requiredPerWeekNow))}/wk from here`}
+        </div>
+      )}
+      {canArm && !goal.target && (
+        <button className="verdict__arm" onClick={() => onArm(goal.id)}>+ Set a target</button>
+      )}
+    </div>
+  );
+}
+
+function GoalSheet({ data, unit, onSave, onClose }) {
+  const [templateId, setTemplateId] = useState(GOAL_TEMPLATES[0].id);
+  const [label, setLabel_] = useState("");
+  const [caps, setCaps] = useState(new Set(GOAL_TEMPLATES[0].capabilities));
+  const [liftExerciseId, setLiftExerciseId] = useState("");
+  const template = GOAL_TEMPLATES.find((t) => t.id === templateId);
+
+  const pickTemplate = (id) => {
+    setTemplateId(id);
+    const t = GOAL_TEMPLATES.find((x) => x.id === id);
+    setCaps(new Set(t.capabilities));
+  };
+  const toggleCap = (c) =>
+    setCaps((prev) => { const next = new Set(prev); next.has(c) ? next.delete(c) : next.add(c); return next; });
+
+  const save = () => {
+    const goal = {
+      id: uid(), templateId, label: label.trim() || template.label,
+      capabilities: [...caps], target: null, createdAt: todayKey(),
+      liftExerciseId: template.targetKind === "lift" ? (liftExerciseId || null) : null,
+    };
+    onSave(goal);
+  };
+
+  return (
+    <div className="sheet" onClick={onClose}>
+      <div className="sheet__in" onClick={(e) => e.stopPropagation()}>
+        <div className="sheet__hd">What are you working toward?</div>
+        <div className="sheet__list goal__templates">
+          {GOAL_TEMPLATES.map((t) => (
+            <button key={t.id} className={`goal__tpl ${t.id === templateId ? "on" : ""}`} onClick={() => pickTemplate(t.id)}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+        {templateId === "stronger" && (
+          <select className="sheet__sel goal__liftpick" value={liftExerciseId} onChange={(e) => setLiftExerciseId(e.target.value)}>
+            <option value="">Which lift? (optional, for a numeric target later)</option>
+            {data.exercises.map((ex) => <option key={ex.id} value={ex.id}>{ex.name}</option>)}
+          </select>
+        )}
+        <input className="sheet__input goal__label" placeholder="Name this goal (optional)" value={label} onChange={(e) => setLabel_(e.target.value)} />
+        <div className="sheet__hint">Capabilities this goal needs — the Coach checks your plans against these.</div>
+        <div className="goal__caps">
+          {Object.entries(CAPABILITIES).map(([k, v]) => (
+            <button key={k} className={`goal__cap ${caps.has(k) ? "on" : ""}`} onClick={() => toggleCap(k)}>{v}</button>
+          ))}
+        </div>
+        <button className="sheet__addb goal__save" onClick={save}>Add goal</button>
+      </div>
+    </div>
+  );
+}
+
+function ArmTargetSheet({ goal, data, unit, onSave, onClose }) {
+  const template = GOAL_TEMPLATES.find((t) => t.id === goal.templateId);
+  const currentBW = currentBodyweight(data, unit);
+  const liftEx = goal.liftExerciseId ? data.exercises.find((e) => e.id === goal.liftExerciseId) : null;
+  const currentLift = liftEx ? estimate1RM(data.workouts, liftEx, unit, currentBW) : null;
+  const baselineValue = template.targetKind === "bodyweight" ? currentBW : currentLift?.est || 0;
+
+  const [value, setValue] = useState(round1(baselineValue + (template.targetKind === "bodyweight" ? -10 : 10)));
+  const [deadline, setDeadline] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() + 56); return todayKey(d);
+  });
+
+  const save = () => {
+    onSave(goal.id, {
+      kind: template.targetKind, exerciseId: goal.liftExerciseId || null,
+      value, deadline, baseline: { value: round1(baselineValue), date: todayKey() },
+    });
+  };
+
+  return (
+    <div className="sheet" onClick={onClose}>
+      <div className="sheet__in" onClick={(e) => e.stopPropagation()}>
+        <div className="sheet__hd">Set a target — {goal.label}</div>
+        <div className="sheet__hint">Baseline: {round1(baselineValue)}{template.targetKind === "bodyweight" ? unit : unit} as of today.</div>
+        <div className="goal__armrow">
+          <label>Target</label>
+          <input type="number" inputMode="decimal" value={value} onChange={(e) => setValue(parseFloat(e.target.value) || 0)} />
+        </div>
+        <div className="goal__armrow">
+          <label>By</label>
+          <input type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
+        </div>
+        <button className="sheet__addb goal__save" onClick={save}>Save target</button>
       </div>
     </div>
   );
@@ -461,9 +332,15 @@ export default function SwolleyMammoths() {
   const [seconds, setSeconds] = useState(60);
   const [note, setNote] = useState("");
   const [rir, setRir] = useState(null);
+  const [warmupFlag, setWarmupFlag] = useState(false);
+  const [painFlag, setPainFlag] = useState(false);
   const [flash, setFlash] = useState(null);
   const [newName, setNewName] = useState("");
   const [newMode, setNewMode] = useState("barbell");
+  const [newCap, setNewCap] = useState("");
+  const [goalSheet, setGoalSheet] = useState(false);
+  const [armingGoalId, setArmingGoalId] = useState(null);
+  const [planCritique, setPlanCritique] = useState(null);
 
   useEffect(() => { setData(loadData() || seed()); }, []);
   useEffect(() => { if (data) saveData(data); }, [data]);
@@ -495,22 +372,42 @@ export default function SwolleyMammoths() {
 
   const bestEver = useMemo(() => {
     if (!openEx || !data) return 0;
-    let best = 0;
-    data.workouts.forEach((w) => w.sets.forEach((s) => {
-      if (s.exerciseId === openEx.id) best = Math.max(best, setScore(s, openEx, unit, bodyweight));
-    }));
-    return best;
+    return bestScore(data.workouts, openEx.id, openEx, unit, bodyweight);
   }, [openEx, data, unit, bodyweight]);
 
   const oneRM = useMemo(() => {
     if (!openEx || !data) return null;
-    return fit1RM(weightedSets(data.workouts, openEx, unit, bodyweight));
+    return estimate1RM(data.workouts, openEx, unit, bodyweight);
   }, [openEx, data, unit, bodyweight]);
 
   const todaySets = useMemo(() => {
     if (!session || !openEx) return [];
     return session.sets.filter((s) => s.exerciseId === openEx.id);
   }, [session, openEx]);
+
+  /* ---------- Coach: goal verdicts + balanced scorecard ---------- */
+
+  const goalVerdicts = useMemo(() => {
+    if (!data) return [];
+    return (data.goals || []).map((g) => goalVerdict(g, data, unit));
+  }, [data, unit]);
+
+  const scorecard = useMemo(() => {
+    if (!data) return null;
+    const pressId = mostTrainedExercise(data.workouts, data.exercises, "horizontal_press");
+    const pullId = mostTrainedExercise(data.workouts, data.exercises, "horizontal_pull");
+    const pairs = pressId && pullId ? [[pressId, pullId]] : [];
+    return balancedScorecard(data, unit, { pairs });
+  }, [data, unit]);
+
+  const changes = useMemo(() => {
+    if (!data || !scorecard) return [];
+    return rankedChanges(goalVerdicts, scorecard);
+  }, [data, goalVerdicts, scorecard]);
+
+  const insights = useMemo(() => (data ? coachInsights(data, unit) : []), [data, unit]);
+
+  const homeVerdict = useMemo(() => (data ? topVerdict(data, unit) : null), [data, unit]);
 
   /* ---------- actions ---------- */
 
@@ -548,7 +445,8 @@ export default function SwolleyMammoths() {
     setOpenExId(exId);
     setNote("");
     setRir(null);
-    // seed the entry from last time — most sessions start at the same load
+    setWarmupFlag(false);
+    setPainFlag(false);
     const prior = priorSessionFor(exId);
     const src = prior?.sets.filter((s) => s.exerciseId === exId).slice(-1)[0];
     if (src) {
@@ -569,10 +467,10 @@ export default function SwolleyMammoths() {
       id: uid(), exerciseId: openEx.id, unit,
       weight, reps: mode === "timed" ? 0 : reps,
       seconds: mode === "timed" ? seconds : 0,
-      note: note.trim(), rir, ts: Date.now(),
+      note: note.trim(), rir, warmup: warmupFlag, pain: painFlag, ts: Date.now(),
     };
     const score = setScore(set, openEx, unit, bodyweight);
-    const isPR = score > bestEver + 0.01;
+    const isPR = !warmupFlag && score > bestEver + 0.01;
 
     if (!session) {
       setData((d) => ({
@@ -585,6 +483,8 @@ export default function SwolleyMammoths() {
       updateSession((w) => ({ ...w, sets: [...w.sets, set] }));
     }
     setNote("");
+    setWarmupFlag(false);
+    setPainFlag(false);
     setFlash({ pr: isPR, score: round1(score), mode });
     setTimeout(() => setFlash(null), 2600);
   };
@@ -603,9 +503,10 @@ export default function SwolleyMammoths() {
   const addExercise = () => {
     const name = newName.trim();
     if (!name) return;
-    const ex = { id: uid(), name, group: "Custom", mode: newMode };
+    const ex = { id: uid(), name, group: "Custom", mode: newMode, capabilities: newCap ? [newCap] : [] };
     setData((d) => ({ ...d, exercises: [...d.exercises, ex] }));
     setNewName("");
+    setNewCap("");
     handlePick(ex.id);
   };
 
@@ -637,15 +538,16 @@ export default function SwolleyMammoths() {
     setWeight(round1(carried));
   };
 
+  /* §8.5a — critique this plan against every goal the moment it's saved */
   const savePlan = () => {
     if (!editingPlan.name.trim()) return;
-    setData((d) => ({
-      ...d,
-      plans: d.plans.some((p) => p.id === editingPlan.id)
-        ? d.plans.map((p) => (p.id === editingPlan.id ? editingPlan : p))
-        : [...d.plans, editingPlan],
-    }));
+    const nextPlans = data.plans.some((p) => p.id === editingPlan.id)
+      ? data.plans.map((p) => (p.id === editingPlan.id ? editingPlan : p))
+      : [...data.plans, editingPlan];
+    setData((d) => ({ ...d, plans: nextPlans }));
+    const msgs = evaluatePlanOnSave(editingPlan, data.plans, data.goals || [], data.exercises);
     setEditingPlan(null);
+    setPlanCritique(msgs.length ? msgs : null);
   };
 
   const patchPlanItem = (i, patch) =>
@@ -672,6 +574,19 @@ export default function SwolleyMammoths() {
     });
   };
 
+  const addGoal = (goal) => {
+    setData((d) => ({ ...d, goals: [...(d.goals || []), goal] }));
+    setGoalSheet(false);
+  };
+
+  const removeGoal = (goalId) =>
+    setData((d) => ({ ...d, goals: d.goals.filter((g) => g.id !== goalId) }));
+
+  const armTarget = (goalId, target) => {
+    setData((d) => ({ ...d, goals: d.goals.map((g) => (g.id === goalId ? { ...g, target } : g)) }));
+    setArmingGoalId(null);
+  };
+
   const exportJSON = () => {
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -682,12 +597,14 @@ export default function SwolleyMammoths() {
 
   if (!data) return <div className="app"><style>{CSS}</style><div className="boot">waking the herd…</div></div>;
 
-  const setsDone = (exId) => (session ? session.sets.filter((s) => s.exerciseId === exId).length : 0);
+  const setsDone = (exId) => (session ? session.sets.filter((s) => s.exerciseId === exId && isCounted(s)).length : 0);
   const pickerEl = picker && (
     <Picker data={data} picker={picker} onPick={handlePick} onClose={() => setPicker(null)}
       newName={newName} setNewName={setNewName} newMode={newMode} setNewMode={setNewMode}
+      newCap={newCap} setNewCap={setNewCap}
       addExercise={addExercise} />
   );
+  const armingGoal = armingGoalId ? data.goals.find((g) => g.id === armingGoalId) : null;
 
   /* ============ LOGGING SCREEN ============ */
   if (openEx) {
@@ -724,7 +641,7 @@ export default function SwolleyMammoths() {
                   ))}
                 </div>
                 <div className="last__sub">beat {setLabel(lastSession.best, openEx, unit)} for a new best</div>
-                {lastSession.note && <div className="last__note">“{lastSession.note}”</div>}
+                {lastSession.note && <div className="last__note">"{lastSession.note}"</div>}
               </>
             ) : (
               <>
@@ -767,6 +684,15 @@ export default function SwolleyMammoths() {
               </div>
             )}
 
+            <div className="flags">
+              <button className={`flags__b ${warmupFlag ? "on" : ""}`} onClick={() => setWarmupFlag((v) => !v)}>
+                Warmup — excluded from analysis
+              </button>
+              <button className={`flags__b flags__b--pain ${painFlag ? "on" : ""}`} onClick={() => setPainFlag((v) => !v)}>
+                ⚠ Pain
+              </button>
+            </div>
+
             <input className="notefield" value={note} onChange={(e) => setNote(e.target.value)}
               placeholder="Note — machine setting, form focus, how it felt" />
 
@@ -795,12 +721,14 @@ export default function SwolleyMammoths() {
             </div>
             {todaySets.length === 0 ? <div className="empty">Nothing logged yet.</div>
               : todaySets.map((s, i) => {
-                const beat = lastSession &&
+                const beat = lastSession && isCounted(s) &&
                   setScore(s, openEx, unit, bodyweight) > setScore(lastSession.best, openEx, unit, bodyweight);
                 return (
-                  <div className="row" key={s.id}>
+                  <div className={`row ${s.warmup ? "row--warmup" : ""}`} key={s.id}>
                     <span className="row__n">{String(i + 1).padStart(2, "0")}</span>
                     <span className="row__main">{setLabel(s, openEx, unit)}</span>
+                    {s.warmup && <span className="row__tag">W</span>}
+                    {s.pain && <span className="row__tag row__tag--pain" title="pain flagged">⚠</span>}
                     {beat && <span className="row__beat" title="beat last session">▲</span>}
                     <span className="row__e1">
                       {mode === "timed" ? mmss(s.seconds) : round1(setScore(s, openEx, unit, bodyweight))}
@@ -923,63 +851,79 @@ export default function SwolleyMammoths() {
       </header>
 
       <main className="body">
-        {tab === "today" && (!session ? (
+        {tab === "today" && (
           <>
-            <div className="prompt">Start today's session</div>
-            {data.plans.map((p) => (
-              <button className="planpick" key={p.id} onClick={() => startSession(p.id)}>
-                <span className="planpick__n">{p.name}</span>
-                <span className="planpick__m">
-                  {p.items.map((i) => exById(i.exerciseId)?.name).filter(Boolean).slice(0, 3).join(" · ")}
-                  {p.items.length > 3 ? ` +${p.items.length - 3}` : ""}
-                </span>
+            {homeVerdict && (
+              <button className={`hero hero--${homeVerdict.status}`} onClick={() => setTab("coach")}>
+                <span className="hero__label">{homeVerdict.goal.label}</span>
+                <span className="hero__headline">{homeVerdict.headline}</span>
               </button>
-            ))}
-            <button className="ghost" onClick={() => startSession(null)}>Freestyle — no plan</button>
-          </>
-        ) : (
-          <>
-            <div className="shd">
-              <span className="shd__n">{session.planName}</span>
-              <span className="shd__m">{session.sets.length} sets logged</span>
-            </div>
-
-            {session.queue.map((q, i) => {
-              const ex = exById(q.exerciseId);
-              const done = setsDone(q.exerciseId);
-              const complete = q.sets && done >= q.sets;
-              return (
-                <div className={`qitem ${complete ? "done" : ""}`} key={q.id}>
-                  <button className="qitem__main" onClick={() => openExercise(q.exerciseId)}>
-                    <div className="qitem__l">
-                      <div className="qitem__name">
-                        {ex ? ex.name : "—"}{q.swapped && <span className="qitem__sw">swapped</span>}
-                      </div>
-                      {q.note && <div className="qitem__note">{q.note}</div>}
-                    </div>
-                    <div className="qitem__prog">{done}/{q.sets || "–"}</div>
+            )}
+            {!session ? (
+              <>
+                <div className="prompt">Start today's session</div>
+                {data.plans.map((p) => (
+                  <button className="planpick" key={p.id} onClick={() => startSession(p.id)}>
+                    <span className="planpick__n">{p.name}</span>
+                    <span className="planpick__m">
+                      {p.items.map((i) => exById(i.exerciseId)?.name).filter(Boolean).slice(0, 3).join(" · ")}
+                      {p.items.length > 3 ? ` +${p.items.length - 3}` : ""}
+                    </span>
                   </button>
-                  <div className="qitem__ctl">
-                    <button onClick={() => moveQueueItem(i, -1)} aria-label="move up">↑</button>
-                    <button onClick={() => moveQueueItem(i, 1)} aria-label="move down">↓</button>
-                    <button className="swap" onClick={() => setPicker({ mode: "swap", itemId: q.id, group: ex?.group })}>swap</button>
-                    <button onClick={() => updateSession((w) => ({ ...w, queue: w.queue.filter((x) => x.id !== q.id) }))}
-                      aria-label="remove">×</button>
-                  </div>
+                ))}
+                <button className="ghost" onClick={() => startSession(null)}>Freestyle — no plan</button>
+              </>
+            ) : (
+              <>
+                <div className="shd">
+                  <span className="shd__n">{session.planName}</span>
+                  <span className="shd__m">{session.sets.length} sets logged</span>
                 </div>
-              );
-            })}
 
-            <button className="ghost" onClick={() => setPlanSheet(true)}>+ Load a plan into this session</button>
-            <button className="ghost" onClick={() => setPicker({ mode: "add" })}>+ Add a single exercise</button>
-            {session.queue.length === 0 && (
-              <div className="empty">Freestyle session — add exercises as you go.</div>
+                {session.queue.map((q, i) => {
+                  const ex = exById(q.exerciseId);
+                  const done = setsDone(q.exerciseId);
+                  const complete = q.sets && done >= q.sets;
+                  return (
+                    <div className={`qitem ${complete ? "done" : ""}`} key={q.id}>
+                      <button className="qitem__main" onClick={() => openExercise(q.exerciseId)}>
+                        <div className="qitem__l">
+                          <div className="qitem__name">
+                            {ex ? ex.name : "—"}{q.swapped && <span className="qitem__sw">swapped</span>}
+                          </div>
+                          {q.note && <div className="qitem__note">{q.note}</div>}
+                        </div>
+                        <div className="qitem__prog">{done}/{q.sets || "–"}</div>
+                      </button>
+                      <div className="qitem__ctl">
+                        <button onClick={() => moveQueueItem(i, -1)} aria-label="move up">↑</button>
+                        <button onClick={() => moveQueueItem(i, 1)} aria-label="move down">↓</button>
+                        <button className="swap" onClick={() => setPicker({ mode: "swap", itemId: q.id, group: ex?.group })}>swap</button>
+                        <button onClick={() => updateSession((w) => ({ ...w, queue: w.queue.filter((x) => x.id !== q.id) }))}
+                          aria-label="remove">×</button>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                <button className="ghost" onClick={() => setPlanSheet(true)}>+ Load a plan into this session</button>
+                <button className="ghost" onClick={() => setPicker({ mode: "add" })}>+ Add a single exercise</button>
+                {session.queue.length === 0 && (
+                  <div className="empty">Freestyle session — add exercises as you go.</div>
+                )}
+              </>
             )}
           </>
-        ))}
+        )}
 
         {tab === "plans" && (
           <>
+            {planCritique && (
+              <div className="critique">
+                {planCritique.map((m, i) => <div key={i} className="critique__line">{m.text}</div>)}
+                <button className="critique__x" onClick={() => setPlanCritique(null)} aria-label="dismiss">×</button>
+              </div>
+            )}
             <div className="prompt">Tap a plan to load it into today</div>
             {data.plans.map((p) => (
               <div className="prow" key={p.id}>
@@ -996,6 +940,50 @@ export default function SwolleyMammoths() {
               </div>
             ))}
             <button className="ghost" onClick={() => setEditingPlan({ id: uid(), name: "", items: [] })}>+ New plan</button>
+          </>
+        )}
+
+        {tab === "coach" && (
+          <>
+            <div className="prompt">Your verdict</div>
+            {(data.goals || []).length === 0 && (
+              <div className="empty">No goals yet. Add one so the Coach has something to evaluate your training against.</div>
+            )}
+            {goalVerdicts.map((v) => (
+              <VerdictCard key={v.goal.id} verdict={v} onArm={setArmingGoalId} canArm={canArmTarget(v.goal, data, unit)} />
+            ))}
+            <button className="ghost" onClick={() => setGoalSheet(true)}>+ Add a goal</button>
+
+            {changes.length > 0 && (
+              <>
+                <div className="prompt coach__section">Changes to make</div>
+                {changes.map((c, i) => <div key={i} className="change">{c.text}</div>)}
+              </>
+            )}
+
+            {scorecard && (
+              <details className="scorecard">
+                <summary>Balanced scorecard — last {scorecard.sinceDays} days</summary>
+                {scorecard.volume.map((v) => (
+                  <div className="scorecard__row" key={v.key}>
+                    <div className="scorecard__head">
+                      <span>{v.labelA} vs {v.labelB}</span>
+                      <span className={`scorecard__status scorecard__status--${v.status}`}>{v.status.replace("-", " ")}</span>
+                    </div>
+                    <div className="scorecard__nums">{v.a} vs {v.b} sets{v.ratio != null ? ` · ${v.ratio}:1` : ""}</div>
+                    {v.status !== "insufficient" && v.status !== "balanced" && <div className="scorecard__note">{v.note}</div>}
+                  </div>
+                ))}
+                {scorecard.trajectories.map((t, i) => <div className="scorecard__note" key={i}>{t.text}</div>)}
+              </details>
+            )}
+
+            {insights.length > 0 && (
+              <details className="scorecard">
+                <summary>All insights</summary>
+                {insights.map((ins, i) => <div className={`insight insight--${ins.severity}`} key={i}>{ins.text}</div>)}
+              </details>
+            )}
           </>
         )}
 
@@ -1020,7 +1008,7 @@ export default function SwolleyMammoths() {
             {data.exercises.map((ex) => {
               const pts = [];
               data.workouts.slice().sort((a, b) => (a.date > b.date ? 1 : -1)).forEach((w) => {
-                const s = w.sets.filter((x) => x.exerciseId === ex.id);
+                const s = w.sets.filter((x) => x.exerciseId === ex.id && isCounted(x));
                 if (s.length) pts.push(Math.max(...s.map((x) => setScore(x, ex, unit, bodyweight))));
               });
               if (!pts.length) return null;
@@ -1078,12 +1066,14 @@ export default function SwolleyMammoths() {
       </main>
 
       <nav className="nav">
-        {[["today","Today"],["plans","Plans"],["lifts","Lifts"],["history","History"]].map(([k, l]) => (
+        {[["today","Today"],["plans","Plans"],["coach","Coach"],["lifts","Lifts"],["history","History"]].map(([k, l]) => (
           <button key={k} className={`nav__b ${tab === k ? "on" : ""}`} onClick={() => setTab(k)}>{l}</button>
         ))}
       </nav>
 
       {pickerEl}
+      {goalSheet && <GoalSheet data={data} unit={unit} onSave={addGoal} onClose={() => setGoalSheet(false)} />}
+      {armingGoal && <ArmTargetSheet goal={armingGoal} data={data} unit={unit} onSave={armTarget} onClose={() => setArmingGoalId(null)} />}
 
       {planSheet && (
         <div className="sheet" onClick={() => setPlanSheet(false)}>
@@ -1109,7 +1099,7 @@ export default function SwolleyMammoths() {
 const CSS = `
 .app {
   --iron:#1A1D22; --raised:#23272E; --line:#31363F; --chalk:#EDE8E0;
-  --dim:#858B96; --gold:#D9A521; --blue:#2C5FA8; --red:#C8322E;
+  --dim:#858B96; --gold:#D9A521; --blue:#2C5FA8; --red:#C8322E; --green:#3A7D53;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   position:fixed; inset:0; display:flex; flex-direction:column;
@@ -1207,11 +1197,19 @@ const CSS = `
 .flash--pr{background:var(--gold);color:#1A1D22;font-weight:600;}
 @keyframes rise{from{opacity:0;transform:translateY(5px);}to{opacity:1;transform:none;}}
 
+.flags{display:flex;gap:8px;margin-top:12px;}
+.flags__b{flex:1;padding:10px;border:1px solid var(--line);border-radius:8px;font-family:var(--mono);font-size:10.5px;letter-spacing:.05em;color:var(--dim);text-align:center;}
+.flags__b.on{background:var(--gold);color:#1A1D22;border-color:var(--gold);font-weight:600;}
+.flags__b--pain.on{background:var(--red);border-color:var(--red);color:#fff;}
+
 .sets{margin-top:26px;}
 .sets__hd{display:flex;justify-content:space-between;font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);padding-bottom:8px;border-bottom:1px solid var(--line);}
 .row{display:flex;align-items:baseline;gap:12px;padding:13px 2px;border-bottom:1px solid var(--line);flex-wrap:wrap;}
+.row--warmup{opacity:.6;}
 .row__n{font-family:var(--mono);font-size:11px;color:var(--dim);}
 .row__main{font-family:var(--mono);font-size:17px;}
+.row__tag{font-family:var(--mono);font-size:9px;padding:2px 5px;border-radius:3px;background:#2C313A;color:var(--dim);}
+.row__tag--pain{background:var(--red);color:#fff;}
 .row__beat{color:var(--gold);font-size:11px;}
 .row__e1{margin-left:auto;font-family:var(--mono);font-size:12px;color:var(--gold);}
 .row__x{color:var(--dim);font-size:20px;padding:0 4px;line-height:1;}
@@ -1285,7 +1283,7 @@ const CSS = `
 .nav__b.on{color:var(--chalk);border-top-color:var(--gold);}
 
 .sheet{position:fixed;inset:0;background:rgba(10,12,15,.72);display:flex;align-items:flex-end;z-index:20;animation:fade 140ms ease-out;}
-.sheet__in{width:100%;max-height:88%;display:flex;flex-direction:column;background:var(--raised);border-top:1px solid var(--line);border-radius:14px 14px 0 0;animation:up 200ms cubic-bezier(.2,.8,.3,1);}
+.sheet__in{width:100%;max-height:88%;display:flex;flex-direction:column;background:var(--raised);border-top:1px solid var(--line);border-radius:14px 14px 0 0;animation:up 200ms cubic-bezier(.2,.8,.3,1);overflow-y:auto;}
 @keyframes fade{from{opacity:0;}to{opacity:1;}}
 @keyframes up{from{transform:translateY(24px);}to{transform:none;}}
 .sheet__hd{padding:18px 18px 6px;font-family:var(--mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--dim);}
@@ -1294,10 +1292,62 @@ const CSS = `
 .sheet__list{overflow-y:auto;flex:1 1 auto;}
 .sheet__i{width:100%;display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:14px 18px;text-align:left;font-size:15px;border-bottom:1px solid var(--line);}
 .sheet__g{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);flex:0 0 auto;}
-.sheet__add{display:flex;gap:6px;padding:12px 18px calc(26px + env(safe-area-inset-bottom));flex:0 0 auto;}
+.sheet__add{display:flex;gap:6px;padding:12px 18px calc(26px + env(safe-area-inset-bottom));flex:0 0 auto;flex-wrap:wrap;}
 .sheet__input{flex:1;min-width:0;background:#1A1D22;border:1px solid var(--line);border-radius:6px;padding:11px;color:var(--chalk);font-size:14px;}
 .sheet__sel{background:#1A1D22;border:1px solid var(--line);border-radius:6px;color:var(--chalk);font-size:12px;padding:0 6px;}
 .sheet__addb{padding:11px 15px;background:var(--chalk);color:#1A1D22;border-radius:6px;font-weight:600;font-size:14px;}
+
+.hero{width:100%;text-align:left;display:block;padding:14px 16px;border-radius:10px;margin-bottom:14px;border:1px solid var(--line);background:var(--raised);border-left:3px solid var(--dim);}
+.hero--red{border-left-color:var(--red);}
+.hero--amber{border-left-color:var(--gold);}
+.hero--green{border-left-color:var(--green);}
+.hero__label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);}
+.hero__headline{display:block;font-size:14.5px;line-height:1.4;margin-top:5px;}
+
+.coach__section{margin-top:22px;}
+.verdict{padding:14px 15px;border-radius:10px;background:var(--raised);border:1px solid var(--line);border-left:3px solid var(--dim);margin-bottom:10px;}
+.verdict--red{border-left-color:var(--red);}
+.verdict--amber{border-left-color:var(--gold);}
+.verdict--green{border-left-color:var(--green);}
+.verdict__top{display:flex;align-items:center;gap:7px;}
+.verdict__dot{width:7px;height:7px;border-radius:50%;background:var(--dim);}
+.verdict__dot--red{background:var(--red);} .verdict__dot--amber{background:var(--gold);} .verdict__dot--green{background:var(--green);}
+.verdict__label{font-size:13.5px;font-weight:600;}
+.verdict__headline{font-size:13.5px;line-height:1.5;margin-top:6px;}
+.verdict__num{font-family:var(--mono);font-size:11px;color:var(--dim);margin-top:6px;}
+.verdict__arm{margin-top:9px;font-family:var(--mono);font-size:10.5px;color:var(--gold);}
+
+.change{font-size:13px;line-height:1.5;padding:10px 0;border-bottom:1px solid var(--line);}
+
+.scorecard{margin-top:20px;border-top:1px solid var(--line);padding-top:14px;}
+.scorecard summary{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);cursor:pointer;}
+.scorecard__row{padding:12px 0;border-bottom:1px solid var(--line);}
+.scorecard__head{display:flex;justify-content:space-between;font-size:13.5px;font-weight:550;}
+.scorecard__status{font-family:var(--mono);font-size:10px;text-transform:uppercase;color:var(--dim);}
+.scorecard__status--sustained-lean{color:var(--red);}
+.scorecard__status--lean{color:var(--gold);}
+.scorecard__nums{font-family:var(--mono);font-size:11px;color:var(--dim);margin-top:3px;}
+.scorecard__note{font-size:12px;color:var(--dim);line-height:1.5;margin-top:5px;}
+.insight{font-size:12.5px;line-height:1.5;padding:8px 0;border-bottom:1px solid var(--line);}
+.insight--alert{color:var(--red);}
+.insight--good{color:var(--gold);}
+
+.critique{background:var(--raised);border:1px solid var(--gold);border-radius:8px;padding:12px 14px;margin-bottom:14px;position:relative;}
+.critique__line{font-size:13px;line-height:1.5;padding-right:16px;}
+.critique__x{position:absolute;top:8px;right:10px;color:var(--dim);font-size:16px;}
+
+.goal__templates{display:flex;flex-wrap:wrap;gap:8px;padding:0 18px 10px;overflow:visible;}
+.goal__tpl{padding:9px 13px;border:1px solid var(--line);border-radius:20px;font-size:12.5px;color:var(--dim);}
+.goal__tpl.on{background:var(--gold);color:#1A1D22;border-color:var(--gold);font-weight:600;}
+.goal__liftpick{margin:0 18px 10px;width:calc(100% - 36px);}
+.goal__label{margin-left:18px;margin-right:18px;width:calc(100% - 36px);}
+.goal__caps{display:flex;flex-wrap:wrap;gap:6px;padding:10px 18px;}
+.goal__cap{padding:6px 10px;border:1px solid var(--line);border-radius:14px;font-family:var(--mono);font-size:10.5px;color:var(--dim);}
+.goal__cap.on{background:#2C313A;color:var(--gold);border-color:var(--gold);}
+.goal__save{margin:12px 18px calc(20px + env(safe-area-inset-bottom));}
+.goal__armrow{display:flex;align-items:center;gap:10px;padding:8px 18px;}
+.goal__armrow label{font-family:var(--mono);font-size:11px;color:var(--dim);width:60px;}
+.goal__armrow input{flex:1;background:#1A1D22;border:1px solid var(--line);border-radius:6px;padding:10px;color:var(--chalk);font-size:14px;}
 
 @media (prefers-reduced-motion: reduce){.app *,.app *::before,.app *::after{animation:none!important;transition:none!important;}}
 `;

@@ -138,13 +138,40 @@ the network first, so a redeploy is picked up on the next launch.
 data wipes it, and it does not follow you to a new phone. Use **Export ledger as JSON**
 in the History tab as your backup. When that stops being good enough, swap `loadData`
 and `saveData` at the top of `src/App.jsx` — they're the only two functions that touch
-storage, and everything else (`epley`, `platesPerSide`, `todayKey`) is pure.
+storage. Everything else lives in `src/logic.js` as pure functions (`epley`, `platesPerSide`,
+`todayKey`, the Coach's `planCoverage`/`goalVerdict`/`balancedScorecard`, …), covered by
+`src/logic.test.js` — see **Tests** below.
+
+---
+
+## Tests
+
+```bash
+npm test          # run once (Vitest)
+npm run test:watch
+```
+
+`src/logic.js` is the pure core — no DOM, no storage — and `src/logic.test.js` is the
+main suite. `src/App.test.jsx` adds a handful of render-level smoke tests on top of it.
 
 ---
 
 ## What's next
 
-- **Phase 2** — real charts, PR history, volume over time, rest timer
-- **Phase 3** — rule-based coaching ("bench stalled 3 sessions", "you haven't pulled in 12 days"),
-  written as a pure function over set history so an LLM can slot in later
-- **Phase 4** — progress photos, side-by-side comparison
+- **Phase 1–3.5** ✅ — exercise library, five exercise modes, plans with mid-session swap,
+  multi-set weighted 1RM, goals with capability-based pace tracking, rule-based coaching,
+  bodyweight-adjusted strength, warmup/pain tagging excluded from analysis.
+- **Phase 4** ✅ (this change) — **the Coach evaluation engine**: `planCoverage` (does your
+  training even cover a goal's required movement patterns), a per-goal green/amber/red
+  verdict combining plan coverage with pace, a critique shown the moment a plan is saved,
+  and a balanced scorecard (push:pull, quad:hinge, horizontal:vertical volume leans plus
+  trajectory divergence) — framed as leans and trends with an evidence qualifier, never an
+  asserted target ratio. See the PRD's §8.5 for the full spec this implements.
+  **Deliberately deferred to later phases**, per the PRD's own phasing: multi-day programs,
+  the movement-equivalence model with cross-exercise progression continuity, adherence
+  (log ↔ plan), a rest timer and wake lock, and the onboarding wizard — goal creation
+  currently lives on the Coach tab rather than first-run.
+- **Phase 5** — movement-equivalence model, cross-exercise progression continuity,
+  adherence, one-tap plan fixes, trajectory divergence depth
+- **Phase 6** — IndexedDB migration, backend, conversational coach, myth buster
+- **Phase 7** — progress photos, side-by-side comparison
