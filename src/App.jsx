@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
-  MODES, CAPABILITIES, CAPABILITY_COLORS, GOAL_TEMPLATES, PLATE_SPEC,
+  MODES, SCHEMES, CAPABILITIES, CAPABILITY_COLORS, GOAL_TEMPLATES, PLATE_SPEC,
   epley, round1, uid, convert, wIn, mmss, todayKey, prettyDate, daysAgo,
   platesPerSide, setLabel, setScore, isCounted, estimate1RM, bestScore,
   seed, currentBodyweight, migrate,
@@ -27,6 +27,18 @@ const SCORECARD_LABEL_CAP = {
   "quad-dominant": "squat", "hip-hinge": "hinge",
   horizontal: "horizontal_press", vertical: "vertical_press",
 };
+
+/* the "new best" flash reads differently depending on what was just
+   logged — an e1RM, a pace, or a conditioning score are not the same
+   kind of number and shouldn't share one label */
+function flashLabel(flash) {
+  const { scheme, mode, score } = flash;
+  if (scheme === "amrap") return `New best — ${round1(score)} reps/min`;
+  if (scheme === "emom") return `New best — ${round1(score)} total reps`;
+  if (mode === "cardio") return `New best pace — ${round1(score)} mi/min`;
+  if (mode === "timed") return `New best — ${mmss(score)}`;
+  return `New best — e1RM ${score}`;
+}
 
 /* ============================================================
    SWOLLEY MAMMOTHS — Phase 4
@@ -359,6 +371,15 @@ export default function SwolleyMammoths() {
   const [rir, setRir] = useState(null);
   const [warmupFlag, setWarmupFlag] = useState(false);
   const [painFlag, setPainFlag] = useState(false);
+  const [scheme, setScheme] = useState("straight");
+  const [distance, setDistance] = useState(0);
+  const [heartRate, setHeartRate] = useState("");
+  const [capMinutes, setCapMinutes] = useState(20);
+  const [totalReps, setTotalReps] = useState(0);
+  const [intervalMinutes, setIntervalMinutes] = useState(1);
+  const [totalIntervals, setTotalIntervals] = useState(8);
+  const [repsPerInterval, setRepsPerInterval] = useState(10);
+  const [missedIntervals, setMissedIntervals] = useState(0);
   const [flash, setFlash] = useState(null);
   const [newName, setNewName] = useState("");
   const [newMode, setNewMode] = useState("barbell");
@@ -384,21 +405,26 @@ export default function SwolleyMammoths() {
       .filter((w) => w.date !== today && w.sets.some((s) => s.exerciseId === exId))
       .sort((a, b) => (a.date < b.date ? 1 : -1))[0] || null;
 
-  /* the whole of last session, not just the top set */
+  /* the whole of last session, not just the top set — scheme-matched,
+     so a straight-set comparison never gets mixed with an AMRAP score
+     logged on the same exercise */
   const lastSession = useMemo(() => {
     if (!openEx || !data) return null;
-    const prior = priorSessionFor(openEx.id);
+    const matches = (s) => s.exerciseId === openEx.id && (s.scheme || "straight") === scheme;
+    const prior = data.workouts
+      .filter((w) => w.date !== today && w.sets.some(matches))
+      .sort((a, b) => (a.date < b.date ? 1 : -1))[0];
     if (!prior) return null;
-    const sets = prior.sets.filter((s) => s.exerciseId === openEx.id);
+    const sets = prior.sets.filter(matches);
     const best = sets.reduce((a, b) =>
       setScore(b, openEx, unit, bodyweight) > setScore(a, openEx, unit, bodyweight) ? b : a);
     return { date: prior.date, sets, best, note: sets.find((s) => s.note)?.note || "" };
-  }, [openEx, data, today, unit, bodyweight]);
+  }, [openEx, data, today, unit, bodyweight, scheme]);
 
   const bestEver = useMemo(() => {
     if (!openEx || !data) return 0;
-    return bestScore(data.workouts, openEx.id, openEx, unit, bodyweight);
-  }, [openEx, data, unit, bodyweight]);
+    return bestScore(data.workouts, openEx.id, openEx, unit, bodyweight, { scheme });
+  }, [openEx, data, unit, bodyweight, scheme]);
 
   const oneRM = useMemo(() => {
     if (!openEx || !data) return null;
@@ -478,22 +504,51 @@ export default function SwolleyMammoths() {
       setWeight(wIn(src, unit));
       setReps(src.reps || 8);
       setSeconds(src.seconds || 60);
+      setScheme(src.scheme || "straight");
+      setDistance(src.distance || 0);
+      setHeartRate(src.heartRate ?? "");
+      setCapMinutes(src.capMinutes || 20);
+      setTotalReps(src.totalReps || 0);
+      setIntervalMinutes(src.intervalMinutes || 1);
+      setTotalIntervals(src.totalIntervals || 8);
+      setRepsPerInterval(src.repsPerInterval || 10);
+      setMissedIntervals(src.missedIntervals || 0);
     } else {
       setWeight(ex?.mode === "bodyweight" ? 0 : ex?.mode === "barbell" ? spec.bar : 0);
       setReps(8);
       setSeconds(60);
+      setScheme("straight");
+      setDistance(0);
+      setHeartRate("");
+      setCapMinutes(20);
+      setTotalReps(0);
+      setIntervalMinutes(1);
+      setTotalIntervals(8);
+      setRepsPerInterval(10);
+      setMissedIntervals(0);
     }
   };
 
   const logSet = () => {
     if (!openEx) return;
     const mode = openEx.mode;
-    const set = {
-      id: uid(), exerciseId: openEx.id, unit,
-      weight, reps: mode === "timed" ? 0 : reps,
-      seconds: mode === "timed" ? seconds : 0,
+    const base = {
+      id: uid(), exerciseId: openEx.id, unit, scheme,
       note: note.trim(), rir, warmup: warmupFlag, pain: painFlag, ts: Date.now(),
     };
+    let set;
+    if (scheme === "amrap") {
+      set = { ...base, weight: 0, reps: 0, seconds: capMinutes * 60, capMinutes, totalReps };
+    } else if (scheme === "emom") {
+      set = { ...base, weight: 0, reps: 0, seconds: intervalMinutes * 60 * totalIntervals,
+        intervalMinutes, totalIntervals, repsPerInterval, missedIntervals };
+    } else if (mode === "cardio") {
+      set = { ...base, weight: 0, reps: 0, distance, seconds, heartRate: heartRate === "" ? null : Number(heartRate) };
+    } else if (mode === "timed") {
+      set = { ...base, weight, reps: 0, seconds };
+    } else {
+      set = { ...base, weight, reps };
+    }
     const score = setScore(set, openEx, unit, bodyweight);
     const isPR = !warmupFlag && score > bestEver + 0.01;
 
@@ -510,7 +565,7 @@ export default function SwolleyMammoths() {
     setNote("");
     setWarmupFlag(false);
     setPainFlag(false);
-    setFlash({ pr: isPR, score: round1(score), mode });
+    setFlash({ pr: isPR, score: round1(score), mode, scheme });
     setTimeout(() => setFlash(null), 2600);
   };
 
@@ -636,6 +691,9 @@ export default function SwolleyMammoths() {
     const mode = openEx.mode;
     const cfg = MODES[mode];
     const queueItem = session?.queue.find((q) => q.exerciseId === openEx.id);
+    // strength-specific UI (RIR, projected 1RM, the fitted-curve section)
+    // only makes sense for a straight set on a weight/rep exercise
+    const showsStrength = mode !== "timed" && mode !== "cardio" && scheme === "straight";
 
     return (
       <div className="app">
@@ -677,25 +735,59 @@ export default function SwolleyMammoths() {
           </div>
 
           <div className="entry">
-            <div className="entry__steppers">
-              {cfg.fields.includes("weight") && (
-                <Stepper label="Weight" value={weight} onChange={setWeight} step={spec.step} min={0}
-                  suffix={cfg.perHand ? `${unit}/hand` : unit} />
-              )}
-              {cfg.fields.includes("added") && (
-                <Stepper label="Added" value={weight} onChange={setWeight} step={spec.step} min={0} suffix={unit} />
-              )}
-              {cfg.fields.includes("reps") && (
-                <Stepper label="Reps" value={reps} onChange={setReps} step={1} min={1} />
-              )}
-              {cfg.fields.includes("seconds") && (
-                <Stepper label="Time" value={seconds} onChange={setSeconds} step={5} min={5} display={mmss} />
-              )}
-            </div>
+            {mode !== "timed" && mode !== "cardio" && (
+              <div className="schemepick">
+                {Object.entries(SCHEMES).map(([k, v]) => (
+                  <button key={k} className={scheme === k ? "on" : ""} onClick={() => setScheme(k)}>{v.label}</button>
+                ))}
+              </div>
+            )}
 
-            {cfg.strip && <BarStrip weight={weight} unit={unit} />}
+            {scheme === "amrap" ? (
+              <div className="entry__steppers">
+                <Stepper label="Cap" value={capMinutes} onChange={setCapMinutes} step={1} min={1} suffix="min" />
+                <Stepper label="Total reps" value={totalReps} onChange={setTotalReps} step={1} min={0} />
+              </div>
+            ) : scheme === "emom" ? (
+              <>
+                <div className="entry__steppers">
+                  <Stepper label="Every" value={intervalMinutes} onChange={setIntervalMinutes} step={1} min={1} suffix="min" />
+                  <Stepper label="Rounds" value={totalIntervals} onChange={setTotalIntervals} step={1} min={1} />
+                  <Stepper label="Reps/rd" value={repsPerInterval} onChange={setRepsPerInterval} step={1} min={0} />
+                </div>
+                <div className="entry__steppers entry__steppers--sub">
+                  <Stepper label="Missed" value={missedIntervals} onChange={setMissedIntervals} step={1} min={0} />
+                </div>
+              </>
+            ) : (
+              <div className="entry__steppers">
+                {cfg.fields.includes("weight") && (
+                  <Stepper label="Weight" value={weight} onChange={setWeight} step={spec.step} min={0}
+                    suffix={cfg.perHand ? `${unit}/hand` : unit} />
+                )}
+                {cfg.fields.includes("added") && (
+                  <Stepper label="Added" value={weight} onChange={setWeight} step={spec.step} min={0} suffix={unit} />
+                )}
+                {cfg.fields.includes("distance") && (
+                  <Stepper label="Distance" value={distance} onChange={setDistance} step={0.1} min={0} suffix="mi" />
+                )}
+                {cfg.fields.includes("reps") && (
+                  <Stepper label="Reps" value={reps} onChange={setReps} step={1} min={1} />
+                )}
+                {cfg.fields.includes("seconds") && (
+                  <Stepper label="Time" value={seconds} onChange={setSeconds} step={5} min={5} display={mmss} />
+                )}
+              </div>
+            )}
 
-            {mode !== "timed" && (
+            {mode === "cardio" && (
+              <input className="notefield hrfield" type="number" inputMode="numeric" value={heartRate}
+                onChange={(e) => setHeartRate(e.target.value)} placeholder="Avg heart rate — optional" />
+            )}
+
+            {cfg.strip && scheme === "straight" && <BarStrip weight={weight} unit={unit} />}
+
+            {showsStrength && (
               <div className="rir">
                 <span className="rir__l">Reps left in the tank</span>
                 <div className="rir__opts">
@@ -721,7 +813,7 @@ export default function SwolleyMammoths() {
             <input className="notefield" value={note} onChange={(e) => setNote(e.target.value)}
               placeholder="Note — machine setting, form focus, how it felt" />
 
-            {mode !== "timed" && (
+            {showsStrength && (
               <div className="proj">
                 projected 1RM <b>{round1(epley(weight + (mode === "bodyweight" ? bodyweight : 0), reps))}</b>
                 {bestEver > 0 && <span className="proj__best">best {round1(bestEver)}</span>}
@@ -733,9 +825,7 @@ export default function SwolleyMammoths() {
 
           {flash && (
             <div className={`flash ${flash.pr ? "flash--pr" : ""}`}>
-              {flash.pr
-                ? (flash.mode === "timed" ? `New best — ${mmss(flash.score)}` : `New best — e1RM ${flash.score}`)
-                : "Logged"}
+              {flash.pr ? flashLabel(flash) : "Logged"}
             </div>
           )}
 
@@ -747,6 +837,7 @@ export default function SwolleyMammoths() {
             {todaySets.length === 0 ? <div className="empty">Nothing logged yet.</div>
               : todaySets.map((s, i) => {
                 const beat = lastSession && isCounted(s) &&
+                  (s.scheme || "straight") === (lastSession.best.scheme || "straight") &&
                   setScore(s, openEx, unit, bodyweight) > setScore(lastSession.best, openEx, unit, bodyweight);
                 return (
                   <div className={`row ${s.warmup ? "row--warmup" : ""}`} key={s.id}>
@@ -765,7 +856,7 @@ export default function SwolleyMammoths() {
               })}
           </section>
 
-          {oneRM && mode !== "timed" && (
+          {oneRM && mode !== "timed" && mode !== "cardio" && (
             <section className="rm">
               <div className="rm__hd">Estimated 1 rep max</div>
               <div className="rm__val">
@@ -1056,7 +1147,7 @@ export default function SwolleyMammoths() {
                       <div className="lift__name"><CapDot capability={ex.capabilities?.[0]} />{ex.name}</div>
                       <div className="lift__meta">
                         {pts.length} session{pts.length > 1 ? "s" : ""} · best{" "}
-                        {ex.mode === "timed" ? mmss(best) : `${round1(best)}${unit}`}
+                        {ex.mode === "timed" ? mmss(best) : ex.mode === "cardio" ? `${round1(best)} mi/min` : `${round1(best)}${unit}`}
                       </div>
                     </div>
                     <div className="lift__r">
@@ -1267,6 +1358,11 @@ const CSS = `
 .row__note{flex-basis:100%;font-size:12px;color:var(--dim);padding-left:23px;line-height:1.4;margin-top:2px;}
 .empty{font-family:var(--mono);font-size:12px;color:var(--dim);padding:20px 2px;line-height:1.6;}
 
+.schemepick{display:flex;gap:6px;margin-bottom:12px;}
+.schemepick button{flex:1;padding:9px 4px;border:1px solid var(--line);border-radius:7px;font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);text-align:center;}
+.schemepick button.on{background:var(--gold);color:#1A1D22;border-color:var(--gold);font-weight:600;}
+.entry__steppers--sub{margin-top:10px;}
+.hrfield{margin-top:10px;}
 .rir{margin-top:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
 .rir__l{font-family:var(--mono);font-size:10px;letter-spacing:.13em;text-transform:uppercase;color:var(--dim);}
 .rir__opts{display:flex;gap:5px;margin-left:auto;}

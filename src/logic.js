@@ -13,6 +13,17 @@ export const MODES = {
   machine: { label: "Machine", fields: ["weight", "reps"] },
   bodyweight: { label: "Bodyweight", fields: ["added", "reps"] },
   timed: { label: "Timed / carry", fields: ["weight", "seconds"] },
+  cardio: { label: "Cardio", fields: ["distance", "seconds"] },
+};
+
+/* a scheme is how the work was structured, independent of the exercise's
+   equipment mode — AMRAP or EMOM can be applied to any exercise (not just
+   a fixed catalog entry), which is why this is a property of the SET
+   being logged, not of the exercise itself. */
+export const SCHEMES = {
+  straight: { label: "Straight sets" },
+  amrap: { label: "AMRAP", fields: ["capMinutes", "totalReps"] },
+  emom: { label: "EMOM", fields: ["intervalMinutes", "totalIntervals", "repsPerInterval"] },
 };
 
 /* ---------- capability taxonomy (Phase 3.5 / Phase 4) ----------
@@ -84,9 +95,9 @@ export const SEED_EXERCISES = [
   { id: "e15", name: "Cable Fly", group: "Push", mode: "machine", capabilities: ["horizontal_press"] },
   { id: "e16", name: "Farmer Carry", group: "Legs", mode: "timed", capabilities: ["carry"] },
   { id: "e17", name: "Plank", group: "Core", mode: "timed", capabilities: ["core"] },
-  { id: "e18", name: "Row Erg", group: "Conditioning", mode: "timed", capabilities: ["row_erg"] },
-  { id: "e19", name: "Ski Erg", group: "Conditioning", mode: "timed", capabilities: ["ski_erg"] },
-  { id: "e20", name: "Run", group: "Conditioning", mode: "timed", capabilities: ["run"] },
+  { id: "e18", name: "Row Erg", group: "Conditioning", mode: "cardio", capabilities: ["row_erg"] },
+  { id: "e19", name: "Ski Erg", group: "Conditioning", mode: "cardio", capabilities: ["ski_erg"] },
+  { id: "e20", name: "Run", group: "Conditioning", mode: "cardio", capabilities: ["run"] },
   { id: "e21", name: "Box Jump", group: "Legs", mode: "bodyweight", capabilities: ["jump", "squat"] },
 ];
 
@@ -199,9 +210,23 @@ export function platesPerSide(total, unit) {
   return { plates: out, leftover: round1(rem), under: false };
 }
 
-/* how a single set reads on screen, given its exercise mode */
+/* how a single set reads on screen, given its exercise mode — a
+   scheme (AMRAP/EMOM) is checked first since it can apply on top of
+   any mode */
 export function setLabel(set, ex, unit) {
   const mode = ex?.mode || "barbell";
+  const scheme = set.scheme || "straight";
+
+  if (scheme === "amrap") return `${set.totalReps || 0} reps in ${mmss((set.capMinutes || 0) * 60)} AMRAP`;
+  if (scheme === "emom") {
+    const missed = set.missedIntervals ? ` · missed ${set.missedIntervals}` : "";
+    return `${set.repsPerInterval || 0}/rd × ${set.totalIntervals || 0} EMOM${missed}`;
+  }
+  if (mode === "cardio") {
+    const dist = set.distance || 0, secs = set.seconds || 0;
+    if (dist <= 0) return mmss(secs);
+    return `${round1(dist)}mi · ${mmss(secs)} (${mmss(secs / dist)}/mi)`;
+  }
   if (mode === "timed") {
     const w = wIn(set, unit);
     return w > 0 ? `${w}${unit} · ${mmss(set.seconds || 0)}` : mmss(set.seconds || 0);
@@ -213,9 +238,24 @@ export function setLabel(set, ex, unit) {
   return `${wIn(set, unit)} × ${set.reps}`;
 }
 
-/* one comparable number per set, so trends work across modes */
+/* one comparable number per set, so trends work across modes AND
+   schemes — always "higher is better" so PR detection stays generic */
 export function setScore(set, ex, unit, bodyweight) {
   const mode = ex?.mode || "barbell";
+  const scheme = set.scheme || "straight";
+
+  if (scheme === "amrap") {
+    const cap = set.capMinutes || 0;
+    return cap > 0 ? (set.totalReps || 0) / cap : (set.totalReps || 0);
+  }
+  if (scheme === "emom") {
+    const completed = Math.max(0, (set.totalIntervals || 0) - (set.missedIntervals || 0));
+    return completed * (set.repsPerInterval || 0);
+  }
+  if (mode === "cardio") {
+    const dist = set.distance || 0, secs = set.seconds || 0;
+    return secs > 0 ? (dist / secs) * 60 : 0; // distance per minute
+  }
   if (mode === "timed") return set.seconds || 0;
   if (mode === "bodyweight") return epley((bodyweight || 0) + wIn(set, unit), set.reps);
   return epley(wIn(set, unit), set.reps);
@@ -231,12 +271,13 @@ export const isCounted = (set) => !set?.warmup;
 const effectiveReps = (s) => (s.reps || 0) + (s.rir == null ? 0 : s.rir);
 
 export function weightedSets(workouts, ex, unit, bodyweight, sinceDays = 120) {
-  if (!ex || ex.mode === "timed") return [];
+  if (!ex || ex.mode === "timed" || ex.mode === "cardio") return [];
   const now = Date.now();
   const raw = [];
   workouts.forEach((w) =>
     w.sets.forEach((st) => {
       if (st.exerciseId !== ex.id || !isCounted(st)) return;
+      if ((st.scheme || "straight") !== "straight") return; // AMRAP/EMOM aren't rep-max attempts
       const reps = effectiveReps(st);
       if (reps < 1 || reps > 10) return; // reliable regression range (tightened from 12, Sept 2026 recon)
       const load = (ex.mode === "bodyweight" ? bodyweight || 0 : 0) + wIn(st, unit);
@@ -302,17 +343,20 @@ export function fit1RM(points) {
 
 /* the exercise's estimated 1RM right now, or null if there's nothing to go on */
 export function estimate1RM(workouts, ex, unit, bodyweight, sinceDays = 120) {
-  if (!ex || ex.mode === "timed") return null;
+  if (!ex || ex.mode === "timed" || ex.mode === "cardio") return null;
   return fit1RM(weightedSets(workouts, ex, unit, bodyweight, sinceDays));
 }
 
-/* best raw set score ever logged for an exercise (used for PRs and sparks) */
-export function bestScore(workouts, exId, ex, unit, bodyweight, { before } = {}) {
+/* best raw set score ever logged for an exercise (used for PRs and sparks).
+   Pass `scheme` to compare like with like — an AMRAP score and a straight
+   set's e1RM live on completely different scales. */
+export function bestScore(workouts, exId, ex, unit, bodyweight, { before, scheme } = {}) {
   let best = 0;
   workouts.forEach((w) => {
     if (before && w.date >= before) return;
     w.sets.forEach((s) => {
       if (s.exerciseId !== exId || !isCounted(s)) return;
+      if (scheme && (s.scheme || "straight") !== scheme) return;
       best = Math.max(best, setScore(s, ex, unit, bodyweight));
     });
   });
@@ -362,7 +406,13 @@ export function migrate(data) {
     workouts: (data.workouts || []).map((w) => ({
       queue: [], planName: "Freestyle",
       ...w,
-      sets: w.sets.map((s) => ({ unit: unitFallback, note: "", seconds: 0, warmup: false, pain: false, ...s })),
+      sets: w.sets.map((s) => ({
+        unit: unitFallback, note: "", seconds: 0, warmup: false, pain: false,
+        scheme: "straight", distance: 0, heartRate: null,
+        capMinutes: 0, totalReps: 0,
+        intervalMinutes: 1, totalIntervals: 0, repsPerInterval: 0, missedIntervals: 0,
+        ...s,
+      })),
     })),
   };
 }

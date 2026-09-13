@@ -100,6 +100,55 @@ describe("platesPerSide", () => {
   });
 });
 
+describe("setLabel / setScore — cardio and AMRAP/EMOM schemes", () => {
+  const cardio = { mode: "cardio" };
+
+  it("labels cardio by distance and pace once distance is logged", () => {
+    expect(setLabel({ distance: 5, seconds: 2400 }, cardio, "lb")).toBe("5mi · 40:00 (8:00/mi)");
+  });
+  it("falls back to a bare duration for cardio with no distance", () => {
+    expect(setLabel({ distance: 0, seconds: 90 }, cardio, "lb")).toBe("1:30");
+  });
+  it("scores cardio as distance per minute (higher is better)", () => {
+    expect(setScore({ distance: 5, seconds: 2400 }, cardio, "lb")).toBeCloseTo(0.125, 5); // 5mi / 40min
+  });
+
+  it("labels and scores an AMRAP set regardless of the exercise's mode", () => {
+    const set = { scheme: "amrap", capMinutes: 20, totalReps: 214 };
+    expect(setLabel(set, barbell("thr", "Thruster"), "lb")).toBe("214 reps in 20:00 AMRAP");
+    expect(setScore(set, barbell("thr", "Thruster"), "lb")).toBeCloseTo(10.7, 1);
+  });
+
+  it("labels and scores an EMOM set, noting missed rounds", () => {
+    const set = { scheme: "emom", intervalMinutes: 1, totalIntervals: 8, repsPerInterval: 10, missedIntervals: 1 };
+    expect(setLabel(set, barbell("kb", "KB Swing"), "lb")).toBe("10/rd × 8 EMOM · missed 1");
+    expect(setScore(set, barbell("kb", "KB Swing"), "lb")).toBe(70); // (8-1)*10
+  });
+
+  it("excludes cardio and non-straight sets from the 1RM fit", () => {
+    const now = Date.now();
+    const cardioEx = barbell("run", "Run", ["run"]);
+    cardioEx.mode = "cardio";
+    const cardioWorkouts = [{ date: "2026-01-01", sets: [{ exerciseId: "run", distance: 5, seconds: 2400, ts: now }] }];
+    expect(weightedSets(cardioWorkouts, cardioEx, "lb", 0)).toEqual([]);
+    expect(estimate1RM(cardioWorkouts, cardioEx, "lb", 0)).toBeNull();
+
+    const strengthEx = barbell("thr", "Thruster");
+    const amrapWorkouts = [{ date: "2026-01-01", sets: [{ exerciseId: "thr", scheme: "amrap", capMinutes: 20, totalReps: 200, ts: now }] }];
+    expect(weightedSets(amrapWorkouts, strengthEx, "lb", 0)).toEqual([]);
+  });
+
+  it("bestScore can be filtered to a single scheme so AMRAP and straight-set PRs don't mix", () => {
+    const ex = barbell("thr", "Thruster");
+    const workouts = [{ date: "2026-01-01", sets: [
+      { exerciseId: "thr", weight: 95, reps: 10, unit: "lb" }, // epley score ~126
+      { exerciseId: "thr", scheme: "amrap", capMinutes: 20, totalReps: 200 }, // score 10
+    ] }];
+    expect(bestScore(workouts, "thr", ex, "lb", 0, { scheme: "straight" })).toBeCloseTo(epley(95, 10), 5);
+    expect(bestScore(workouts, "thr", ex, "lb", 0, { scheme: "amrap" })).toBe(10);
+  });
+});
+
 describe("setLabel", () => {
   const ex = (mode) => ({ mode });
   it("labels a timed set with and without added weight", () => {
@@ -257,6 +306,8 @@ describe("seed / currentBodyweight / bodyweightAsOf / migrate", () => {
     expect(migrated.goals).toEqual([]);
     expect(migrated.workouts[0].sets[0].warmup).toBe(false);
     expect(migrated.workouts[0].sets[0].pain).toBe(false);
+    expect(migrated.workouts[0].sets[0].scheme).toBe("straight");
+    expect(migrated.workouts[0].sets[0].distance).toBe(0);
     expect(migrated.exercises[0].capabilities).toBeDefined();
   });
   it("migrate returns null for null input", () => {
