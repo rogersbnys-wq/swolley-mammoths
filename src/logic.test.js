@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  epley, round1, convert, wIn, mmss, todayKey, prettyDate, daysAgo,
+  epley, round1, convert, wIn, mmss, parseMMSS, todayKey, prettyDate, daysAgo,
   platesPerSide, setLabel, setScore, isCounted, weightedSets, fit1RM,
   estimate1RM, bestScore, seed, currentBodyweight, bodyweightAsOf, migrate,
   goalCurrentValue, canArmTarget, pace, bodyweightAdjustedStrength,
@@ -60,6 +60,24 @@ describe("mmss", () => {
     expect(mmss(65)).toBe("1:05");
     expect(mmss(600)).toBe("10:00");
     expect(mmss(5)).toBe("0:05");
+  });
+});
+
+describe("parseMMSS", () => {
+  it("parses minutes:seconds back into total seconds", () => {
+    expect(parseMMSS("35:30")).toBe(2130);
+    expect(parseMMSS("1:05")).toBe(65);
+    expect(parseMMSS("10:00")).toBe(600);
+  });
+  it("round-trips with mmss", () => {
+    [65, 600, 5, 2130].forEach((s) => expect(parseMMSS(mmss(s))).toBe(s));
+  });
+  it("still accepts a bare number of seconds with no colon", () => {
+    expect(parseMMSS("90")).toBe(90);
+  });
+  it("tolerates a missing half on either side of the colon", () => {
+    expect(parseMMSS("35:")).toBe(2100);
+    expect(parseMMSS(":30")).toBe(30);
   });
 });
 

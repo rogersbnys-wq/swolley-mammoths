@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
   MODES, SCHEMES, CAPABILITIES, CAPABILITY_COLORS, GOAL_TEMPLATES, PLATE_SPEC,
-  epley, round1, uid, convert, wIn, mmss, todayKey, prettyDate, daysAgo,
+  epley, round1, uid, convert, wIn, mmss, parseMMSS, todayKey, prettyDate, daysAgo,
   platesPerSide, setLabel, setScore, isCounted, estimate1RM, bestScore,
   seed, currentBodyweight, migrate,
   canArmTarget, pace, bodyweightAdjustedStrength, coachInsights,
@@ -101,7 +101,13 @@ function BarStrip({ weight, unit }) {
   );
 }
 
-function Stepper({ label, value, onChange, step, min, suffix, display }) {
+/* toDraft/fromDraft let a stepper round-trip through a display format
+   other than a bare number — e.g. time fields show/edit "35:30"
+   rather than a raw seconds count. Without fromDraft, a plain number
+   input is used (so the numeric keypad still shows on mobile); with
+   it, the input is text (a number input silently drops ":" on most
+   mobile keyboards, which is the bug this exists to avoid). */
+function Stepper({ label, value, onChange, step, min, suffix, display, toDraft, fromDraft }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const ref = useRef(null);
@@ -109,7 +115,7 @@ function Stepper({ label, value, onChange, step, min, suffix, display }) {
   useEffect(() => { if (editing && ref.current) ref.current.select(); }, [editing]);
 
   const commit = () => {
-    const n = parseFloat(draft);
+    const n = (fromDraft || parseFloat)(draft);
     if (!isNaN(n) && n >= min) onChange(round1(n));
     setEditing(false);
   };
@@ -120,11 +126,12 @@ function Stepper({ label, value, onChange, step, min, suffix, display }) {
       <div className="stepper__row">
         <button className="stepper__btn" onClick={() => onChange(Math.max(min, round1(value - step)))} aria-label={`decrease ${label}`}>−</button>
         {editing ? (
-          <input ref={ref} className="stepper__input" type="number" inputMode="decimal" value={draft}
+          <input ref={ref} className="stepper__input" type={fromDraft ? "text" : "number"}
+            inputMode={fromDraft ? "text" : "decimal"} value={draft}
             onChange={(e) => setDraft(e.target.value)} onBlur={commit}
             onKeyDown={(e) => e.key === "Enter" && commit()} />
         ) : (
-          <button className="stepper__value" onClick={() => { setDraft(String(value)); setEditing(true); }}>
+          <button className="stepper__value" onClick={() => { setDraft((toDraft || String)(value)); setEditing(true); }}>
             {display ? display(value) : value}
             {suffix && !display && <span className="stepper__suffix">{suffix}</span>}
           </button>
@@ -781,7 +788,8 @@ export default function SwolleyMammoths() {
                   <Stepper label="Reps" value={reps} onChange={setReps} step={1} min={1} />
                 )}
                 {cfg.fields.includes("seconds") && (
-                  <Stepper label="Time" value={seconds} onChange={setSeconds} step={5} min={5} display={mmss} />
+                  <Stepper label="Time" value={seconds} onChange={setSeconds} step={5} min={5}
+                    display={mmss} toDraft={mmss} fromDraft={parseMMSS} />
                 )}
               </div>
             )}

@@ -171,6 +171,18 @@ export const wIn = (set, unit) => round1(convert(set.weight || 0, set.unit || "l
 
 export const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
 
+/* the inverse of mmss — "35:30" -> 2130 seconds. Also accepts a bare
+   number of seconds ("90") for quick entry, since that was always a
+   valid thing to type before minutes:seconds editing existed. */
+export function parseMMSS(str) {
+  const s = String(str).trim();
+  if (!s.includes(":")) return parseFloat(s);
+  const [m, sec] = s.split(":");
+  const mins = parseFloat(m);
+  const secs = parseFloat(sec);
+  return (isNaN(mins) ? 0 : mins * 60) + (isNaN(secs) ? 0 : secs);
+}
+
 export function todayKey(d = new Date()) {
   const p = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
