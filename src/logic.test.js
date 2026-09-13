@@ -323,6 +323,35 @@ describe("seed / currentBodyweight / bodyweightAsOf / migrate", () => {
   it("migrate returns null for null input", () => {
     expect(migrate(null)).toBeNull();
   });
+
+  it("migrate upgrades a catalog exercise to the current seed definition, even when the device saved it before the catalog changed", () => {
+    // simulates a real device whose save predates the timed->cardio move for Run
+    const staleData = {
+      exercises: [{ id: "e20", name: "Run", group: "Conditioning", mode: "timed" }], // no capabilities at all
+      workouts: [],
+    };
+    const migrated = migrate(staleData);
+    const run = migrated.exercises.find((e) => e.id === "e20");
+    expect(run.mode).toBe("cardio");
+    expect(run.capabilities).toEqual(["run"]);
+  });
+
+  it("migrate never touches a genuinely custom (non-catalog) exercise", () => {
+    const staleData = {
+      exercises: [{ id: "custom1", name: "Sled Push", group: "Custom", mode: "timed", capabilities: ["carry"] }],
+      workouts: [],
+    };
+    const migrated = migrate(staleData);
+    const custom = migrated.exercises.find((e) => e.id === "custom1");
+    expect(custom.mode).toBe("timed");
+    expect(custom.capabilities).toEqual(["carry"]);
+  });
+
+  it("migrate appends catalog exercises the saved device never had at all", () => {
+    const staleData = { exercises: [{ id: "e1", name: "Back Squat", group: "Legs", mode: "barbell" }], workouts: [] };
+    const migrated = migrate(staleData);
+    expect(migrated.exercises.find((e) => e.id === "e20")).toBeTruthy(); // Run, added later
+  });
 });
 
 /* ============ goals: value, arming, pace ============ */

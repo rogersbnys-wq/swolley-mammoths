@@ -390,17 +390,32 @@ export function bodyweightAsOf(data, unit, dateKey) {
   return round1(convert(latest.weight, latest.unit || "lb", unit));
 }
 
+/* catalog exercises (the ones this app ships, keyed by their fixed
+   SEED_EXERCISES id) should always track the current seed definition
+   — mode, capabilities, name, group — even on a device whose save
+   predates a catalog change. A user's own custom exercises (ids not
+   in the seed set) are never touched here. Without this, a returning
+   user's already-saved "Run" stays frozen at whatever mode/capabilities
+   it had the day their device first seeded it, forever. */
+function reconcileExercises(stored) {
+  const seedById = Object.fromEntries(SEED_EXERCISES.map((e) => [e.id, e]));
+  const reconciled = (stored || SEED_EXERCISES).map((e) => {
+    const seedDef = seedById[e.id];
+    return seedDef
+      ? { ...e, ...seedDef }
+      : { mode: e.mode || (e.bar === false ? "machine" : "barbell"), capabilities: e.capabilities || [], ...e };
+  });
+  const knownIds = new Set(reconciled.map((e) => e.id));
+  return [...reconciled, ...SEED_EXERCISES.filter((e) => !knownIds.has(e.id))];
+}
+
 export function migrate(data) {
   if (!data) return null;
   const unitFallback = data.unit || "lb";
   return {
     ...seed(),
     ...data,
-    exercises: (data.exercises || SEED_EXERCISES).map((e) => ({
-      mode: e.mode || (e.bar === false ? "machine" : "barbell"),
-      capabilities: e.capabilities || [],
-      ...e,
-    })),
+    exercises: reconcileExercises(data.exercises),
     plans: data.plans || SEED_PLANS,
     bodyweightLog: data.bodyweightLog || [],
     goals: data.goals || [],
