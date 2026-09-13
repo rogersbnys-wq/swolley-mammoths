@@ -7,6 +7,7 @@ import {
   canArmTarget, pace, bodyweightAdjustedStrength, coachInsights,
   goalVerdict, evaluatePlanOnSave, balancedScorecard, rankedChanges,
   describeCapabilities, mostTrainedExercise, topVerdict,
+  needsBackupReminder, importData,
 } from "./logic.js";
 
 /* a small colored dot for an exercise's primary capability — the
@@ -438,6 +439,14 @@ export default function SwolleyMammoths() {
     return estimate1RM(data.workouts, openEx, unit, bodyweight);
   }, [openEx, data, unit, bodyweight]);
 
+  /* §8.4 — "+40lb on +3lb bodyweight" vs "+40lb on +15lb bodyweight" are
+     different outcomes; only meaningful for loaded lifts, not bodyweight
+     movements (where the score already folds bodyweight in) or cardio/timed */
+  const bwStrength = useMemo(() => {
+    if (!openEx || !data || !["barbell", "dumbbell", "machine"].includes(openEx.mode)) return null;
+    return bodyweightAdjustedStrength(data, openEx, unit);
+  }, [openEx, data, unit]);
+
   const todaySets = useMemo(() => {
     if (!session || !openEx) return [];
     return session.sets.filter((s) => s.exerciseId === openEx.id);
@@ -661,6 +670,11 @@ export default function SwolleyMammoths() {
     });
   };
 
+  /* feeds coachInsights' consistency check — without this set, the
+     app has no denominator to compare actual sessions/week against */
+  const setDaysPerWeek = (n) =>
+    setData((d) => ({ ...d, profile: { ...d.profile, daysPerWeek: Math.max(0, n) || null } }));
+
   const addGoal = (goal) => {
     setData((d) => ({ ...d, goals: [...(d.goals || []), goal] }));
     setGoalSheet(false);
@@ -680,9 +694,31 @@ export default function SwolleyMammoths() {
     const a = document.createElement("a");
     a.href = url; a.download = `swolley-mammoths-${today}.json`; a.click();
     URL.revokeObjectURL(url);
+    setData((d) => ({ ...d, lastExportAt: today }));
+  };
+
+  /* §8.10 — the PRD's own top-flagged risk: localStorage (and even
+     IndexedDB) can be evicted by Safari under disk pressure, so a
+     working import path is safety-critical on iPhone, not a nicety */
+  const importFileRef = useRef(null);
+  const triggerImport = () => importFileRef.current?.click();
+  const handleImportFile = (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-selecting the same file later
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const imported = importData(reader.result);
+      if (!imported) { alert("That file doesn't look like a Swolley Mammoths export."); return; }
+      if (!window.confirm("Import this file? It replaces everything currently on this device.")) return;
+      setData(imported);
+    };
+    reader.readAsText(file);
   };
 
   if (!data) return <div className="app"><style>{CSS}</style><div className="boot">waking the herd…</div></div>;
+
+  const backupDue = needsBackupReminder(data);
 
   const setsDone = (exId) => (session ? session.sets.filter((s) => s.exerciseId === exId && isCounted(s)).length : 0);
   const pickerEl = picker && (
@@ -914,6 +950,25 @@ export default function SwolleyMammoths() {
               )}
             </section>
           )}
+
+          {bwStrength && (
+            <section className="bwadj">
+              <div className="rm__hd">Strength vs. bodyweight</div>
+              <div className="bwadj__line">
+                <b className={bwStrength.liftDeltaPct >= 0 ? "up" : "down"}>
+                  {bwStrength.liftDeltaPct >= 0 ? "+" : ""}{bwStrength.liftDeltaPct}%
+                </b> strength on{" "}
+                <b className={bwStrength.bwDeltaPct >= 0 ? "up" : "down"}>
+                  {bwStrength.bwDeltaPct >= 0 ? "+" : ""}{bwStrength.bwDeltaPct}%
+                </b> bodyweight
+              </div>
+              <div className="rm__sub">
+                {bwStrength.verdict === "real-gain" && "A real strength gain — it's outpacing any bodyweight change."}
+                {bwStrength.verdict === "mostly-bodyweight" && "Mostly tracking bodyweight change, not a strength gain on its own."}
+                {bwStrength.verdict === "flat" && "Roughly flat over this window."}
+              </div>
+            </section>
+          )}
         </main>
       </div>
     );
@@ -983,6 +1038,12 @@ export default function SwolleyMammoths() {
       <main className="body body--wide">
         {tab === "today" && (
           <>
+            {backupDue && (
+              <button className="backupnag" onClick={() => { exportJSON(); }}>
+                <span>It's been a while since you backed up — your log only lives on this device.</span>
+                <span className="backupnag__cta">Export now →</span>
+              </button>
+            )}
             {homeVerdict && (
               <button className={`hero hero--${homeVerdict.status}`} onClick={() => setTab("coach")}>
                 <span className="hero__label">{homeVerdict.goal.label}</span>
@@ -1145,6 +1206,18 @@ export default function SwolleyMammoths() {
               </div>
             </div>
 
+            <div className="bw">
+              <div className="bw__l">
+                <div className="bw__hd">Training days/week</div>
+                <div className="bw__sub">Lets the Coach flag when you're falling behind your own target</div>
+              </div>
+              <div className="bw__ctl">
+                <button onClick={() => setDaysPerWeek((data.profile.daysPerWeek || 0) - 1)}>−</button>
+                <span className="bw__v">{data.profile.daysPerWeek || "—"}</span>
+                <button onClick={() => setDaysPerWeek((data.profile.daysPerWeek || 0) + 1)}>+</button>
+              </div>
+            </div>
+
             <div className="cardgrid">
               {data.exercises.map((ex) => {
                 const pts = [];
@@ -1203,6 +1276,8 @@ export default function SwolleyMammoths() {
               );
             })}
             {data.workouts.length > 0 && <button className="export" onClick={exportJSON}>Export ledger as JSON</button>}
+            <button className="export" onClick={triggerImport}>Import from a JSON export</button>
+            <input ref={importFileRef} type="file" accept="application/json" hidden onChange={handleImportFile} />
           </>
         )}
       </main>
@@ -1396,6 +1471,11 @@ const CSS = `
 .rm__vs{font-size:12px;color:var(--dim);margin-top:6px;line-height:1.5;}
 .rm__warn{font-size:11.5px;color:var(--dim);margin-top:10px;padding-left:9px;border-left:2px solid var(--red);line-height:1.5;}
 
+.bwadj{margin-top:16px;padding:16px;background:var(--raised);border:1px solid var(--line);border-radius:10px;}
+.bwadj__line{font-size:15px;margin-top:6px;}
+.bwadj__line b{font-family:var(--mono);font-weight:600;}
+.bwadj__line b.up{color:var(--gold);} .bwadj__line b.down{color:var(--dim);}
+
 .bw{display:flex;align-items:center;gap:12px;padding:14px 15px;background:var(--raised);border:1px solid var(--line);border-radius:9px;margin-bottom:16px;}
 .bw__l{flex:1;min-width:0;}
 .bw__hd{font-size:14px;font-weight:600;}
@@ -1464,6 +1544,10 @@ const CSS = `
 .hero--red{border-left-color:var(--red);}
 .hero--amber{border-left-color:var(--gold);}
 .hero--green{border-left-color:var(--green);}
+
+.backupnag{width:100%;text-align:left;display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:12px 14px;border-radius:8px;margin-bottom:12px;background:rgba(217,165,33,.08);border:1px solid var(--gold);}
+.backupnag span:first-child{font-size:12.5px;line-height:1.4;}
+.backupnag__cta{font-family:var(--mono);font-size:11px;color:var(--gold);white-space:nowrap;flex:0 0 auto;}
 .hero__label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);}
 .hero__headline{display:block;font-size:14.5px;line-height:1.4;margin-top:5px;}
 

@@ -8,6 +8,7 @@ import {
   evaluatePlanOnSave, volumeByCapability, progressionPct, trajectoryDivergence,
   balancedScorecard, rankedChanges, describeCapabilities, patternSide,
   mostTrainedExercise, topVerdict, CAPABILITY_COLORS,
+  needsBackupReminder, importData,
   GOAL_TEMPLATES, SEED_EXERCISES, SEED_PLANS, CAPABILITIES,
 } from "./logic.js";
 
@@ -850,6 +851,45 @@ describe("CAPABILITY_COLORS", () => {
   });
   it("produces valid hsl() strings", () => {
     Object.values(CAPABILITY_COLORS).forEach((c) => expect(c).toMatch(/^hsl\(\d+, \d+%, \d+%\)$/));
+  });
+});
+
+describe("needsBackupReminder", () => {
+  it("never nags with no workouts logged yet", () => {
+    expect(needsBackupReminder({ workouts: [] })).toBe(false);
+  });
+  it("nags once 8+ sessions have been logged with no export at all", () => {
+    const now = new Date(2026, 0, 8); // close to the fixture dates, so only the session count is in play
+    const workouts = Array.from({ length: 8 }, (_, i) => ({ date: `2026-01-0${i + 1}`, sets: [] }));
+    expect(needsBackupReminder({ workouts, lastExportAt: null }, now)).toBe(true);
+    expect(needsBackupReminder({ workouts: workouts.slice(0, 3), lastExportAt: null }, now)).toBe(false);
+  });
+  it("nags once 30+ days have passed since the last export, even with few sessions", () => {
+    const now = new Date(2026, 2, 1);
+    const workouts = [{ date: "2026-02-25", sets: [] }];
+    expect(needsBackupReminder({ workouts, lastExportAt: "2026-01-01" }, now)).toBe(true);
+    expect(needsBackupReminder({ workouts, lastExportAt: "2026-02-20" }, now)).toBe(false);
+  });
+  it("only counts sessions logged after the last export toward the session threshold", () => {
+    const workouts = [
+      { date: "2026-01-01", sets: [] }, { date: "2026-01-02", sets: [] }, { date: "2026-01-03", sets: [] },
+    ];
+    expect(needsBackupReminder({ workouts, lastExportAt: "2026-01-02" }, new Date(2026, 0, 3))).toBe(false);
+  });
+});
+
+describe("importData", () => {
+  it("returns null for invalid JSON", () => {
+    expect(importData("not json")).toBeNull();
+  });
+  it("returns null for valid JSON that isn't a real export", () => {
+    expect(importData(JSON.stringify({ foo: "bar" }))).toBeNull();
+  });
+  it("migrates a valid export just like a localStorage load would be", () => {
+    const exported = JSON.stringify({ workouts: [{ date: "2026-01-01", sets: [{ exerciseId: "e1", weight: 100, reps: 5 }] }] });
+    const imported = importData(exported);
+    expect(imported.workouts[0].sets[0].scheme).toBe("straight");
+    expect(imported.goals).toEqual([]);
   });
 });
 

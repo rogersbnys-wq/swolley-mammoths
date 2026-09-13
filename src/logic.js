@@ -447,6 +447,48 @@ export function migrate(data) {
 }
 
 /* ============================================================
+   §8.10 — data durability: backup reminder + import
+   Flagged in the PRD as P0 and "currently the biggest risk" —
+   Safari can evict localStorage under disk pressure, so export/
+   import plus a nag are safety-critical on iPhone, not a nicety.
+   ============================================================ */
+
+const BACKUP_REMINDER_SESSIONS = 8;
+const BACKUP_REMINDER_DAYS = 30;
+
+/* non-blocking — just tells the caller whether to show the nag. If
+   there's never been an export, the day clock runs from the first
+   workout rather than being permanently "overdue", so a brand new
+   user isn't nagged on session one — the session-count threshold
+   covers that case instead. */
+export function needsBackupReminder(data, now = new Date()) {
+  const workouts = data.workouts || [];
+  if (!workouts.length) return false;
+  const lastExportAt = data.lastExportAt || null;
+  const sessionsSinceExport = lastExportAt
+    ? workouts.filter((w) => w.date > lastExportAt).length
+    : workouts.length;
+  const sinceDate = lastExportAt || workouts.slice().sort((a, b) => (a.date < b.date ? -1 : 1))[0].date;
+  const daysSinceExport = (now - new Date(`${sinceDate}T00:00:00`)) / 86400000;
+  return sessionsSinceExport >= BACKUP_REMINDER_SESSIONS || daysSinceExport >= BACKUP_REMINDER_DAYS;
+}
+
+/* the inverse of the History tab's JSON export — validates the shape
+   loosely (an export always has a workouts array) and runs it through
+   the same migrate() every load goes through, so an old export is
+   upgraded exactly like an old localStorage save would be. Returns
+   null (never throws) on anything that isn't a real export. */
+export function importData(raw) {
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.workouts)) return null;
+    return migrate(parsed);
+  } catch {
+    return null;
+  }
+}
+
+/* ============================================================
    PHASE 3 / 3.5 — pace, bodyweight adjustment, rule-based coach
    ============================================================ */
 
