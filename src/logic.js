@@ -54,6 +54,16 @@ export function describeCapabilities(caps) {
   return `${labels.slice(0, -1).join(", ")}, and ${labels[labels.length - 1]}`;
 }
 
+/* one color per capability, evenly spaced around the wheel (there are
+   exactly 12 capabilities, so 30° apart) — a real categorical system
+   instead of ad-hoc color picks, tuned for legibility on the app's
+   dark ground. Never the only signal for a capability (always paired
+   with its text label), just what makes the taxonomy visible instead
+   of thirteen shades of gray. */
+export const CAPABILITY_COLORS = Object.fromEntries(
+  Object.keys(CAPABILITIES).map((cap, i) => [cap, `hsl(${(i * 30) % 360}, 62%, 62%)`])
+);
+
 /* ---------- seed data ---------- */
 
 export const SEED_EXERCISES = [

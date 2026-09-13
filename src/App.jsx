@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
-  MODES, CAPABILITIES, GOAL_TEMPLATES, PLATE_SPEC,
+  MODES, CAPABILITIES, CAPABILITY_COLORS, GOAL_TEMPLATES, PLATE_SPEC,
   epley, round1, uid, convert, wIn, mmss, todayKey, prettyDate, daysAgo,
   platesPerSide, setLabel, setScore, isCounted, estimate1RM, bestScore,
   seed, currentBodyweight, migrate,
@@ -8,6 +8,25 @@ import {
   goalVerdict, evaluatePlanOnSave, balancedScorecard, rankedChanges,
   describeCapabilities, mostTrainedExercise, topVerdict,
 } from "./logic.js";
+
+/* a small colored dot for an exercise's primary capability — the
+   capability taxonomy exists in the data model but was invisible in
+   the UI; this is the minimal way to surface it without relying on
+   color alone (always paired with the exercise/goal name as text) */
+function CapDot({ capability }) {
+  if (!capability) return null;
+  const color = CAPABILITY_COLORS[capability];
+  return <span className="capdot" style={{ background: color }} title={CAPABILITIES[capability]} />;
+}
+
+/* the scorecard's volume rows use human labels ("pressing", "quad-dominant", …)
+   rather than raw capability keys — map each to a representative capability
+   so its dot matches the same color used everywhere else for that pattern */
+const SCORECARD_LABEL_CAP = {
+  pressing: "horizontal_press", pulling: "horizontal_pull",
+  "quad-dominant": "squat", "hip-hinge": "hinge",
+  horizontal: "horizontal_press", vertical: "vertical_press",
+};
 
 /* ============================================================
    SWOLLEY MAMMOTHS — Phase 4
@@ -175,7 +194,7 @@ function Picker({ data, picker, onPick, onClose, newName, setNewName, newMode, s
         <div className="sheet__list">
           {sorted.map((ex) => (
             <button key={ex.id} className="sheet__i" onClick={() => onPick(ex.id)}>
-              <span>{ex.name}</span>
+              <span className="sheet__iname"><CapDot capability={ex.capabilities?.[0]} />{ex.name}</span>
               <span className="sheet__g">{ex.group} · {MODES[ex.mode]?.label || ex.mode}</span>
             </button>
           ))}
@@ -208,6 +227,9 @@ function VerdictCard({ verdict, onArm, canArm }) {
       <div className="verdict__top">
         <span className={`verdict__dot verdict__dot--${status}`} aria-hidden="true" />
         <span className="verdict__label">{goal.label}</span>
+        {goal.capabilities?.length > 0 && (
+          <span className="verdict__caps">{goal.capabilities.map((c) => <CapDot key={c} capability={c} />)}</span>
+        )}
       </div>
       <div className="verdict__headline">{headline}</div>
       {p && p.gap != null && p.outcome == null && (
@@ -269,7 +291,10 @@ function GoalSheet({ data, unit, onSave, onClose }) {
         <div className="sheet__hint">Capabilities this goal needs — the Coach checks your plans against these.</div>
         <div className="goal__caps">
           {Object.entries(CAPABILITIES).map(([k, v]) => (
-            <button key={k} className={`goal__cap ${caps.has(k) ? "on" : ""}`} onClick={() => toggleCap(k)}>{v}</button>
+            <button key={k} className={`goal__cap ${caps.has(k) ? "on" : ""}`} onClick={() => toggleCap(k)}
+              style={caps.has(k) ? { background: CAPABILITY_COLORS[k], borderColor: CAPABILITY_COLORS[k], color: "#1A1D22" } : { borderColor: CAPABILITY_COLORS[k], color: CAPABILITY_COLORS[k] }}>
+              {v}
+            </button>
           ))}
         </div>
         <button className="sheet__addb goal__save" onClick={save}>Add goal</button>
@@ -850,7 +875,7 @@ export default function SwolleyMammoths() {
         <button className="hd__unit" onClick={toggleUnit}>{unit}</button>
       </header>
 
-      <main className="body">
+      <main className="body body--wide">
         {tab === "today" && (
           <>
             {homeVerdict && (
@@ -862,15 +887,17 @@ export default function SwolleyMammoths() {
             {!session ? (
               <>
                 <div className="prompt">Start today's session</div>
-                {data.plans.map((p) => (
-                  <button className="planpick" key={p.id} onClick={() => startSession(p.id)}>
-                    <span className="planpick__n">{p.name}</span>
-                    <span className="planpick__m">
-                      {p.items.map((i) => exById(i.exerciseId)?.name).filter(Boolean).slice(0, 3).join(" · ")}
-                      {p.items.length > 3 ? ` +${p.items.length - 3}` : ""}
-                    </span>
-                  </button>
-                ))}
+                <div className="cardgrid">
+                  {data.plans.map((p) => (
+                    <button className="planpick" key={p.id} onClick={() => startSession(p.id)}>
+                      <span className="planpick__n">{p.name}</span>
+                      <span className="planpick__m">
+                        {p.items.map((i) => exById(i.exerciseId)?.name).filter(Boolean).slice(0, 3).join(" · ")}
+                        {p.items.length > 3 ? ` +${p.items.length - 3}` : ""}
+                      </span>
+                    </button>
+                  ))}
+                </div>
                 <button className="ghost" onClick={() => startSession(null)}>Freestyle — no plan</button>
               </>
             ) : (
@@ -889,7 +916,7 @@ export default function SwolleyMammoths() {
                       <button className="qitem__main" onClick={() => openExercise(q.exerciseId)}>
                         <div className="qitem__l">
                           <div className="qitem__name">
-                            {ex ? ex.name : "—"}{q.swapped && <span className="qitem__sw">swapped</span>}
+                            <CapDot capability={ex?.capabilities?.[0]} />{ex ? ex.name : "—"}{q.swapped && <span className="qitem__sw">swapped</span>}
                           </div>
                           {q.note && <div className="qitem__note">{q.note}</div>}
                         </div>
@@ -925,20 +952,22 @@ export default function SwolleyMammoths() {
               </div>
             )}
             <div className="prompt">Tap a plan to load it into today</div>
-            {data.plans.map((p) => (
-              <div className="prow" key={p.id}>
-                <button className="prow__main" onClick={() => { loadPlanIntoSession(p.id); setTab("today"); }}>
-                  <div className="prow__n">{p.name}</div>
-                  <div className="prow__m">
-                    {p.items.map((i) => exById(i.exerciseId)?.name).filter(Boolean).slice(0, 3).join(" · ")}
-                    {p.items.length > 3 ? ` +${p.items.length - 3}` : ""}
-                  </div>
-                </button>
-                <button className="prow__edit" onClick={() => setEditingPlan(JSON.parse(JSON.stringify(p)))}>edit</button>
-                <button className="prow__x" aria-label="delete plan"
-                  onClick={() => setData((d) => ({ ...d, plans: d.plans.filter((x) => x.id !== p.id) }))}>×</button>
-              </div>
-            ))}
+            <div className="cardgrid">
+              {data.plans.map((p) => (
+                <div className="prow" key={p.id}>
+                  <button className="prow__main" onClick={() => { loadPlanIntoSession(p.id); setTab("today"); }}>
+                    <div className="prow__n">{p.name}</div>
+                    <div className="prow__m">
+                      {p.items.map((i) => exById(i.exerciseId)?.name).filter(Boolean).slice(0, 3).join(" · ")}
+                      {p.items.length > 3 ? ` +${p.items.length - 3}` : ""}
+                    </div>
+                  </button>
+                  <button className="prow__edit" onClick={() => setEditingPlan(JSON.parse(JSON.stringify(p)))}>edit</button>
+                  <button className="prow__x" aria-label="delete plan"
+                    onClick={() => setData((d) => ({ ...d, plans: d.plans.filter((x) => x.id !== p.id) }))}>×</button>
+                </div>
+              ))}
+            </div>
             <button className="ghost" onClick={() => setEditingPlan({ id: uid(), name: "", items: [] })}>+ New plan</button>
           </>
         )}
@@ -949,9 +978,11 @@ export default function SwolleyMammoths() {
             {(data.goals || []).length === 0 && (
               <div className="empty">No goals yet. Add one so the Coach has something to evaluate your training against.</div>
             )}
-            {goalVerdicts.map((v) => (
-              <VerdictCard key={v.goal.id} verdict={v} onArm={setArmingGoalId} canArm={canArmTarget(v.goal, data, unit)} />
-            ))}
+            <div className="cardgrid">
+              {goalVerdicts.map((v) => (
+                <VerdictCard key={v.goal.id} verdict={v} onArm={setArmingGoalId} canArm={canArmTarget(v.goal, data, unit)} />
+              ))}
+            </div>
             <button className="ghost" onClick={() => setGoalSheet(true)}>+ Add a goal</button>
 
             {changes.length > 0 && (
@@ -967,7 +998,11 @@ export default function SwolleyMammoths() {
                 {scorecard.volume.map((v) => (
                   <div className="scorecard__row" key={v.key}>
                     <div className="scorecard__head">
-                      <span>{v.labelA} vs {v.labelB}</span>
+                      <span>
+                        <CapDot capability={SCORECARD_LABEL_CAP[v.labelA]} />{v.labelA}
+                        <span className="scorecard__vs"> vs </span>
+                        <CapDot capability={SCORECARD_LABEL_CAP[v.labelB]} />{v.labelB}
+                      </span>
                       <span className={`scorecard__status scorecard__status--${v.status}`}>{v.status.replace("-", " ")}</span>
                     </div>
                     <div className="scorecard__nums">{v.a} vs {v.b} sets{v.ratio != null ? ` · ${v.ratio}:1` : ""}</div>
@@ -1005,31 +1040,33 @@ export default function SwolleyMammoths() {
               </div>
             </div>
 
-            {data.exercises.map((ex) => {
-              const pts = [];
-              data.workouts.slice().sort((a, b) => (a.date > b.date ? 1 : -1)).forEach((w) => {
-                const s = w.sets.filter((x) => x.exerciseId === ex.id && isCounted(x));
-                if (s.length) pts.push(Math.max(...s.map((x) => setScore(x, ex, unit, bodyweight))));
-              });
-              if (!pts.length) return null;
-              const trend = pts.length > 1 ? pts[pts.length - 1] - pts[0] : 0;
-              const best = Math.max(...pts);
-              return (
-                <button className="lift" key={ex.id} onClick={() => openExercise(ex.id)}>
-                  <div className="lift__l">
-                    <div className="lift__name">{ex.name}</div>
-                    <div className="lift__meta">
-                      {pts.length} session{pts.length > 1 ? "s" : ""} · best{" "}
-                      {ex.mode === "timed" ? mmss(best) : `${round1(best)}${unit}`}
+            <div className="cardgrid">
+              {data.exercises.map((ex) => {
+                const pts = [];
+                data.workouts.slice().sort((a, b) => (a.date > b.date ? 1 : -1)).forEach((w) => {
+                  const s = w.sets.filter((x) => x.exerciseId === ex.id && isCounted(x));
+                  if (s.length) pts.push(Math.max(...s.map((x) => setScore(x, ex, unit, bodyweight))));
+                });
+                if (!pts.length) return null;
+                const trend = pts.length > 1 ? pts[pts.length - 1] - pts[0] : 0;
+                const best = Math.max(...pts);
+                return (
+                  <button className="lift" key={ex.id} onClick={() => openExercise(ex.id)}>
+                    <div className="lift__l">
+                      <div className="lift__name"><CapDot capability={ex.capabilities?.[0]} />{ex.name}</div>
+                      <div className="lift__meta">
+                        {pts.length} session{pts.length > 1 ? "s" : ""} · best{" "}
+                        {ex.mode === "timed" ? mmss(best) : `${round1(best)}${unit}`}
+                      </div>
                     </div>
-                  </div>
-                  <div className="lift__r">
-                    <Spark points={pts} color={trend >= 0 ? "#D9A521" : "#7E848E"} />
-                    <div className={`lift__d ${trend >= 0 ? "up" : "down"}`}>{trend >= 0 ? "+" : ""}{round1(trend)}</div>
-                  </div>
-                </button>
-              );
-            })}
+                    <div className="lift__r">
+                      <Spark points={pts} color={trend >= 0 ? "#D9A521" : "#7E848E"} />
+                      <div className={`lift__d ${trend >= 0 ? "up" : "down"}`}>{trend >= 0 ? "+" : ""}{round1(trend)}</div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
             {data.workouts.length === 0 && <div className="empty">No lifts tracked yet.</div>}
           </>
         )}
@@ -1107,9 +1144,14 @@ const CSS = `
   -webkit-font-smoothing:antialiased; overflow:hidden;
 }
 .app *,.app *::before,.app *::after{box-sizing:border-box;}
-.app button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit;}
+.app button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit;-webkit-tap-highlight-color:transparent;transition:transform 100ms,filter 100ms,background-color 100ms;}
 .app button:focus-visible,.app input:focus-visible,.app select:focus-visible{outline:2px solid var(--gold);outline-offset:2px;}
 .app input,.app select{font-family:var(--sans);}
+/* baseline tap feedback for every button in the app — specific buttons
+   below (e.g. .log, .stepper__btn) define their own :active and win
+   the cascade by appearing later in this stylesheet */
+.app button:active{filter:brightness(1.22);transform:scale(.97);}
+.capdot{display:inline-block;width:7px;height:7px;border-radius:50%;flex:0 0 auto;margin-right:6px;vertical-align:middle;}
 .boot{margin:auto;color:var(--dim);font-family:var(--mono);font-size:13px;}
 
 .hd{display:flex;align-items:center;gap:12px;padding:calc(15px + env(safe-area-inset-top)) 18px 13px;border-bottom:1px solid var(--line);flex:0 0 auto;}
@@ -1123,6 +1165,15 @@ const CSS = `
 .back{font-size:26px;line-height:1;color:var(--dim);padding:0 6px 0 0;flex:0 0 auto;}
 
 .body{flex:1 1 auto;overflow-y:auto;padding:16px 18px 28px;}
+.body--wide{width:100%;}
+.cardgrid{display:grid;grid-template-columns:1fr;gap:10px;}
+@media (min-width:700px){
+  .body--wide{max-width:1100px;margin:0 auto;padding-left:32px;padding-right:32px;}
+  .body--wide .cardgrid{grid-template-columns:repeat(auto-fill,minmax(280px,1fr));align-items:start;}
+  .body--wide .cardgrid .planpick,.body--wide .cardgrid .prow,.body--wide .cardgrid .lift,.body--wide .cardgrid .verdict{margin-bottom:0;}
+  .body--wide .prow{border-bottom:none;border:1px solid var(--line);border-radius:8px;padding:2px 8px;}
+  .hd,.nav{padding-left:max(18px,calc(50% - 550px));padding-right:max(18px,calc(50% - 550px));}
+}
 
 .prompt{font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);margin-bottom:10px;}
 .planpick{width:100%;text-align:left;padding:15px 16px;background:var(--raised);border:1px solid var(--line);border-radius:8px;margin-bottom:9px;display:block;}
@@ -1278,9 +1329,10 @@ const CSS = `
 .chip{font-family:var(--mono);font-size:11.5px;padding:4px 8px;background:var(--raised);border:1px solid var(--line);border-radius:4px;}
 .export{width:100%;margin-top:22px;padding:13px;border:1px solid var(--line);border-radius:8px;font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);}
 
-.nav{display:flex;border-top:1px solid var(--line);background:var(--iron);flex:0 0 auto;}
-.nav__b{flex:1;padding:15px 0 calc(20px + env(safe-area-inset-bottom));font-family:var(--mono);font-size:10px;letter-spacing:.13em;text-transform:uppercase;color:var(--dim);border-top:2px solid transparent;}
-.nav__b.on{color:var(--chalk);border-top-color:var(--gold);}
+.nav{display:flex;border-top:1px solid var(--line);background:var(--raised);flex:0 0 auto;}
+.nav__b{flex:1;padding:14px 0 calc(19px + env(safe-area-inset-bottom));font-family:var(--mono);font-size:10px;letter-spacing:.13em;text-transform:uppercase;color:var(--dim);border-top:3px solid transparent;border-right:1px solid var(--line);}
+.nav__b:last-child{border-right:none;}
+.nav__b.on{color:var(--chalk);border-top-color:var(--gold);background:rgba(217,165,33,.09);font-weight:600;}
 
 .sheet{position:fixed;inset:0;background:rgba(10,12,15,.72);display:flex;align-items:flex-end;z-index:20;animation:fade 140ms ease-out;}
 .sheet__in{width:100%;max-height:88%;display:flex;flex-direction:column;background:var(--raised);border-top:1px solid var(--line);border-radius:14px 14px 0 0;animation:up 200ms cubic-bezier(.2,.8,.3,1);overflow-y:auto;}
@@ -1291,6 +1343,7 @@ const CSS = `
 .sheet__search{margin:8px 18px 10px;width:auto;}
 .sheet__list{overflow-y:auto;flex:1 1 auto;}
 .sheet__i{width:100%;display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:14px 18px;text-align:left;font-size:15px;border-bottom:1px solid var(--line);}
+.sheet__iname{display:flex;align-items:center;}
 .sheet__g{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);flex:0 0 auto;}
 .sheet__add{display:flex;gap:6px;padding:12px 18px calc(26px + env(safe-area-inset-bottom));flex:0 0 auto;flex-wrap:wrap;}
 .sheet__input{flex:1;min-width:0;background:#1A1D22;border:1px solid var(--line);border-radius:6px;padding:11px;color:var(--chalk);font-size:14px;}
@@ -1310,9 +1363,11 @@ const CSS = `
 .verdict--amber{border-left-color:var(--gold);}
 .verdict--green{border-left-color:var(--green);}
 .verdict__top{display:flex;align-items:center;gap:7px;}
-.verdict__dot{width:7px;height:7px;border-radius:50%;background:var(--dim);}
+.verdict__dot{width:7px;height:7px;border-radius:50%;background:var(--dim);flex:0 0 auto;}
 .verdict__dot--red{background:var(--red);} .verdict__dot--amber{background:var(--gold);} .verdict__dot--green{background:var(--green);}
 .verdict__label{font-size:13.5px;font-weight:600;}
+.verdict__caps{display:flex;gap:2px;margin-left:auto;}
+.verdict__caps .capdot{margin-right:0;}
 .verdict__headline{font-size:13.5px;line-height:1.5;margin-top:6px;}
 .verdict__num{font-family:var(--mono);font-size:11px;color:var(--dim);margin-top:6px;}
 .verdict__arm{margin-top:9px;font-family:var(--mono);font-size:10.5px;color:var(--gold);}
@@ -1322,7 +1377,8 @@ const CSS = `
 .scorecard{margin-top:20px;border-top:1px solid var(--line);padding-top:14px;}
 .scorecard summary{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);cursor:pointer;}
 .scorecard__row{padding:12px 0;border-bottom:1px solid var(--line);}
-.scorecard__head{display:flex;justify-content:space-between;font-size:13.5px;font-weight:550;}
+.scorecard__head{display:flex;justify-content:space-between;align-items:center;font-size:13.5px;font-weight:550;}
+.scorecard__vs{color:var(--dim);font-weight:400;margin:0 2px;}
 .scorecard__status{font-family:var(--mono);font-size:10px;text-transform:uppercase;color:var(--dim);}
 .scorecard__status--sustained-lean{color:var(--red);}
 .scorecard__status--lean{color:var(--gold);}

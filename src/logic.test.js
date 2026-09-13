@@ -7,8 +7,8 @@ import {
   coachInsights, planCoverage, suggestPlanForCapability, goalVerdict,
   evaluatePlanOnSave, volumeByCapability, progressionPct, trajectoryDivergence,
   balancedScorecard, rankedChanges, describeCapabilities, patternSide,
-  mostTrainedExercise, topVerdict,
-  GOAL_TEMPLATES, SEED_EXERCISES, SEED_PLANS,
+  mostTrainedExercise, topVerdict, CAPABILITY_COLORS,
+  GOAL_TEMPLATES, SEED_EXERCISES, SEED_PLANS, CAPABILITIES,
 } from "./logic.js";
 
 const addDays = (date, n) => { const d = new Date(date); d.setDate(d.getDate() + n); return d; };
@@ -730,6 +730,18 @@ describe("topVerdict", () => {
     };
     expect(topVerdict(data, "lb").goal.id).toBe("broke");
     expect(topVerdict(data, "lb").status).toBe("red");
+  });
+});
+
+describe("CAPABILITY_COLORS", () => {
+  it("assigns a distinct color to every capability", () => {
+    const caps = Object.keys(CAPABILITIES);
+    const colors = caps.map((c) => CAPABILITY_COLORS[c]);
+    expect(colors.every(Boolean)).toBe(true);
+    expect(new Set(colors).size).toBe(caps.length);
+  });
+  it("produces valid hsl() strings", () => {
+    Object.values(CAPABILITY_COLORS).forEach((c) => expect(c).toMatch(/^hsl\(\d+, \d+%, \d+%\)$/));
   });
 });
 
