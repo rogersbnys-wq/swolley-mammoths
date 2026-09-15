@@ -1109,7 +1109,7 @@ export function balancedScorecard(data, unit, { sinceDays = 28, now = Date.now()
   const volume = [
     { ...volumeLean(byCapNow, byCapPrior, ["horizontal_press", "vertical_press"], ["horizontal_pull", "vertical_pull"], "pressing", "pulling"),
       key: "push_pull",
-      note: "Sustained one-sidedness here is *associated with* shoulder issues in the literature, not established as causal — and the defensible ratio is contested (sources range 1:1 to 2:1). This names the lean, not a target." },
+      note: "Sustained one-sidedness here is associated with shoulder issues in the literature, not established as causal — and the defensible ratio is contested (sources range 1:1 to 2:1). This names the lean, not a target." },
     { ...volumeLean(byCapNow, byCapPrior, ["squat"], ["hinge"], "quad-dominant", "hip-hinge"), key: "quad_hinge",
       note: "Flagged as a direction worth balancing, not a prescribed ratio." },
     { ...volumeLean(byCapNow, byCapPrior, ["horizontal_press", "horizontal_pull"], ["vertical_press", "vertical_pull"], "horizontal", "vertical"), key: "horizontal_vertical",
@@ -1170,8 +1170,20 @@ export function rankedChanges(goalVerdicts, scorecard) {
       changes.push({ priority: v.status === "red" ? 0 : 1, source: "goal", goalId: v.goal.id, text: v.headline });
     }
   });
+  // Different capability-pair lenses can land on the exact same
+  // underlying split — e.g. one lift dominating a session shows up as
+  // both a pressing:pulling lean and a horizontal:vertical lean with
+  // identical set counts, since the two lenses share a capability.
+  // Match on the numbers rather than the label: identical counts on
+  // both sides means it's the same story restated, not a second
+  // finding. Surface it once here; the full per-lens breakdown still
+  // shows in the scorecard details below.
+  const seenLeans = new Set();
   scorecard.volume.forEach((v) => {
     if (v.status === "sustained-lean") {
+      const sig = `${v.a}:${v.b}`;
+      if (seenLeans.has(sig)) return;
+      seenLeans.add(sig);
       changes.push({ priority: 1, source: "scorecard", key: v.key,
         text: `${v.lean} volume has led for 4+ weeks (${v.a} vs ${v.b} sets). ${v.note}` });
     }

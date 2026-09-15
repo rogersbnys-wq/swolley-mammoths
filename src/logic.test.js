@@ -1035,6 +1035,29 @@ describe("rankedChanges", () => {
     const priorities = ranked.map((r) => r.priority);
     expect(priorities).toEqual([...priorities].sort((a, b) => a - b));
   });
+
+  it("dedupes scorecard leans that different capability lenses reduce to the same numbers", () => {
+    // e.g. one dominant lift (bench) can trip both the pressing:pulling
+    // lens and the horizontal:vertical lens with an identical split —
+    // the two lenses even give it different lean labels ("pressing" vs
+    // "horizontal"), but it's the same underlying fact restated and
+    // should read as one change, not two near-identical ones.
+    const scorecard = {
+      volume: [
+        { key: "push_pull", status: "sustained-lean", lean: "pressing", a: 12, b: 8, note: "note a" },
+        { key: "horizontal_vertical", status: "sustained-lean", lean: "horizontal", a: 12, b: 8, note: "note b" },
+        { key: "quad_hinge", status: "sustained-lean", lean: "quad-dominant", a: 9, b: 3, note: "note c" },
+      ],
+      trajectories: [],
+      painFlags: [],
+    };
+    const ranked = rankedChanges([], scorecard);
+    const sameNumberChanges = ranked.filter((r) => r.text.includes("12 vs 8 sets"));
+    expect(sameNumberChanges.length).toBe(1);
+    expect(sameNumberChanges[0].text.startsWith("pressing volume")).toBe(true);
+    expect(ranked.some((r) => r.text.startsWith("quad-dominant volume"))).toBe(true);
+    expect(ranked.length).toBe(2);
+  });
 });
 
 describe("mostTrainedExercise", () => {
