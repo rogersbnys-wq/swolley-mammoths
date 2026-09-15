@@ -885,6 +885,53 @@ export function goalVerdict(goal, data, unit, now = new Date()) {
   };
 }
 
+/* §8.5b — are you doing the plan you set? Intended sessions come from
+   an active program's own cadence (days/week ≈ its day count) when
+   one has actually been used in the window, falling back to the
+   profile's days-per-week when no program is active. With neither,
+   there's no honest denominator, so adherence is omitted rather than
+   computed against a guess. */
+export function adherence(data, { windowDays = 28, now = Date.now() } = {}) {
+  const inWindow = data.workouts.filter((w) => ageDays(w.date, now) <= windowDays && w.sets.length > 0);
+  const actualSessions = inWindow.length;
+
+  const programWorkouts = inWindow.filter((w) => w.planId).sort((a, b) => (a.date < b.date ? -1 : 1));
+  let activeProgram = null;
+  if (programWorkouts.length) {
+    const plan = data.plans.find((p) => p.id === programWorkouts[programWorkouts.length - 1].planId);
+    if (plan?.days?.length > 1) activeProgram = plan;
+  }
+
+  let intended = null, source = null;
+  if (activeProgram) {
+    intended = Math.round((windowDays / 7) * activeProgram.days.length);
+    source = "program";
+  } else if (data.profile?.daysPerWeek) {
+    intended = Math.round((windowDays / 7) * data.profile.daysPerWeek);
+    source = "profile";
+  }
+  if (intended == null) return null;
+
+  /* a session "counts" toward the plan only if it actually resembles
+     what was prescribed — not just that a planId was attached */
+  let matched = 0, diverged = 0;
+  inWindow.forEach((w) => {
+    if (!w.planId) return;
+    const plan = data.plans.find((p) => p.id === w.planId);
+    if (!plan) return;
+    const prescribed = new Set(planAllItems(plan).map((i) => i.exerciseId));
+    if (!prescribed.size) return;
+    const actualIds = new Set(w.sets.map((s) => s.exerciseId));
+    const overlap = [...actualIds].filter((id) => prescribed.has(id)).length;
+    if (overlap / prescribed.size >= 0.5) matched++; else diverged++;
+  });
+
+  return {
+    windowDays, intended, actualSessions, source, matched, diverged,
+    rate: intended > 0 ? Math.min(1, actualSessions / intended) : null,
+  };
+}
+
 /* §8.5a — critique a plan against every goal at the moment it's
    saved, using every OTHER plan plus this one as the candidate set,
    so the message reflects the whole intended program, not just this

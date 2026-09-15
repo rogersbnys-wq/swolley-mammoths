@@ -7,7 +7,7 @@ import {
   coachInsights, planCoverage, suggestPlanForCapability, goalVerdict,
   evaluatePlanOnSave, volumeByCapability, progressionPct, trajectoryDivergence,
   balancedScorecard, rankedChanges, describeCapabilities, patternSide, planAllItems,
-  personalRatio, equivalentLoad, substitutedPoints,
+  personalRatio, equivalentLoad, substitutedPoints, adherence,
   mostTrainedExercise, topVerdict, CAPABILITY_COLORS,
   needsBackupReminder, importData, generateWarmupRamp,
   GOAL_TEMPLATES, SEED_EXERCISES, SEED_PLANS, CAPABILITIES,
@@ -623,6 +623,61 @@ describe("movement equivalence", () => {
       workouts: [{ date: "2026-01-05", queue: [{ id: "q1", exerciseId: "e1" }], sets: [] }],
     };
     expect(substitutedPoints(data, "e1", "lb")).toEqual([]);
+  });
+});
+
+describe("adherence", () => {
+  const now = new Date(2026, 2, 1).getTime();
+  const recentDate = (daysAgoN) => todayKey(new Date(now - daysAgoN * 86400000));
+
+  it("is omitted with no active program and no days-per-week set", () => {
+    const data = { workouts: [], plans: [], profile: {} };
+    expect(adherence(data, { now })).toBeNull();
+  });
+
+  it("falls back to the profile's days-per-week with no active program", () => {
+    const data = { workouts: [], plans: [], profile: { daysPerWeek: 4 } };
+    const a = adherence(data, { windowDays: 28, now });
+    expect(a.source).toBe("profile");
+    expect(a.intended).toBe(16); // 4 weeks * 4/wk
+    expect(a.actualSessions).toBe(0);
+  });
+
+  it("uses an active multi-day program's own cadence instead of the profile", () => {
+    const plan = { id: "prog", name: "Split", days: [
+      { id: "d1", name: "Day 1", items: [{ exerciseId: "e1" }] },
+      { id: "d2", name: "Day 2", items: [{ exerciseId: "e2" }] },
+      { id: "d3", name: "Day 3", items: [{ exerciseId: "e3" }] },
+    ] };
+    const data = {
+      plans: [plan], profile: { daysPerWeek: 2 },
+      workouts: [{ date: recentDate(2), planId: "prog", sets: [{ exerciseId: "e1", weight: 100, reps: 5 }] }],
+    };
+    const a = adherence(data, { windowDays: 28, now });
+    expect(a.source).toBe("program");
+    expect(a.intended).toBe(12); // 4 weeks * 3 days/wk
+  });
+
+  it("counts a session as matched only when it actually resembles what was prescribed", () => {
+    const plan = { id: "p1", items: [{ exerciseId: "e1" }, { exerciseId: "e2" }] };
+    const data = {
+      plans: [plan], profile: { daysPerWeek: 3 },
+      workouts: [
+        { date: recentDate(1), planId: "p1", sets: [{ exerciseId: "e1" }, { exerciseId: "e2" }] }, // matches
+        { date: recentDate(3), planId: "p1", sets: [{ exerciseId: "e9" }] }, // diverged entirely
+      ],
+    };
+    const a = adherence(data, { windowDays: 28, now });
+    expect(a.matched).toBe(1);
+    expect(a.diverged).toBe(1);
+  });
+
+  it("only counts workouts with at least one set as an actual session", () => {
+    const data = {
+      plans: [], profile: { daysPerWeek: 3 },
+      workouts: [{ date: recentDate(1), planId: null, sets: [] }],
+    };
+    expect(adherence(data, { windowDays: 28, now }).actualSessions).toBe(0);
   });
 });
 

@@ -8,7 +8,7 @@ import {
   goalVerdict, evaluatePlanOnSave, balancedScorecard, rankedChanges,
   describeCapabilities, mostTrainedExercise, topVerdict,
   needsBackupReminder, importData, generateWarmupRamp, planAllItems,
-  equivalentLoad, substitutedPoints,
+  equivalentLoad, substitutedPoints, adherence,
 } from "./logic.js";
 
 /* a small colored dot for an exercise's primary capability — the
@@ -573,6 +573,8 @@ export default function SwolleyMammoths() {
   }, [data, goalVerdicts, scorecard]);
 
   const insights = useMemo(() => (data ? coachInsights(data, unit) : []), [data, unit]);
+
+  const adherenceInfo = useMemo(() => (data ? adherence(data, {}) : null), [data]);
 
   const homeVerdict = useMemo(() => (data ? topVerdict(data, unit) : null), [data, unit]);
 
@@ -1416,6 +1418,21 @@ export default function SwolleyMammoths() {
               </>
             )}
 
+            {adherenceInfo && (
+              <div className="adherence">
+                <div className="adherence__num">
+                  {adherenceInfo.actualSessions} of {adherenceInfo.intended} planned sessions
+                  <span className="adherence__win"> · last {adherenceInfo.windowDays} days</span>
+                </div>
+                {adherenceInfo.diverged > 0 && (
+                  <div className="adherence__note">
+                    {adherenceInfo.diverged} session{adherenceInfo.diverged === 1 ? "" : "s"} logged against a plan
+                    drifted materially from what it prescribed{adherenceInfo.matched > 0 ? `, vs ${adherenceInfo.matched} that matched` : ""}.
+                  </div>
+                )}
+              </div>
+            )}
+
             {scorecard && (
               <details className="scorecard">
                 <summary>Balanced scorecard — last {scorecard.sinceDays} days</summary>
@@ -1880,6 +1897,11 @@ const CSS = `
 .verdict__arm{margin-top:9px;font-family:var(--mono);font-size:10.5px;color:var(--gold);}
 
 .change{font-size:13px;line-height:1.5;padding:10px 0;border-bottom:1px solid var(--line);}
+
+.adherence{margin-top:18px;padding:14px 15px;background:var(--raised);border:1px solid var(--line);border-radius:9px;}
+.adherence__num{font-size:14px;font-weight:600;}
+.adherence__win{font-family:var(--mono);font-size:10.5px;font-weight:400;color:var(--dim);}
+.adherence__note{font-size:12px;color:var(--dim);margin-top:6px;line-height:1.5;}
 
 .scorecard{margin-top:20px;border-top:1px solid var(--line);padding-top:14px;}
 .scorecard summary{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);cursor:pointer;}
