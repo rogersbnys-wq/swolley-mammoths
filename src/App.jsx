@@ -8,6 +8,7 @@ import {
   goalVerdict, evaluatePlanOnSave, balancedScorecard, rankedChanges,
   describeCapabilities, mostTrainedExercise, topVerdict,
   needsBackupReminder, importData, generateWarmupRamp, planAllItems,
+  equivalentLoad, substitutedPoints,
 } from "./logic.js";
 
 /* a small colored dot for an exercise's primary capability — the
@@ -194,7 +195,7 @@ function ProfileChart({ fit }) {
 
 /* ---------- exercise picker, reused for choose / add / swap ---------- */
 
-function Picker({ data, picker, onPick, onClose, newName, setNewName, newMode, setNewMode, newCap, setNewCap, addExercise }) {
+function Picker({ data, unit, picker, onPick, onClose, newName, setNewName, newMode, setNewMode, newCap, setNewCap, addExercise }) {
   const [q, setQ] = useState("");
   const list = data.exercises.filter((e) => e.name.toLowerCase().includes(q.toLowerCase()));
   const sorted = picker.group
@@ -205,6 +206,12 @@ function Picker({ data, picker, onPick, onClose, newName, setNewName, newMode, s
     : picker.mode === "add" ? "Add to session"
     : picker.mode === "planAdd" ? "Add to plan" : "Choose a lift";
 
+  /* §8.3 — ranked alternatives show a converted equivalent load,
+     from your own history where you have it, a labeled estimate
+     otherwise */
+  const fromEx = picker.mode === "swap" ? data.exercises.find((e) => e.id === picker.fromExerciseId) : null;
+  const fromBest = fromEx ? bestScore(data.workouts, fromEx.id, fromEx, unit, currentBodyweight(data, unit)) : 0;
+
   return (
     <div className="sheet" onClick={onClose}>
       <div className="sheet__in" onClick={(e) => e.stopPropagation()}>
@@ -212,12 +219,19 @@ function Picker({ data, picker, onPick, onClose, newName, setNewName, newMode, s
         {picker.mode === "swap" && <div className="sheet__hint">Equipment taken? Same muscle group listed first.</div>}
         <input className="sheet__search" placeholder="Search" value={q} onChange={(e) => setQ(e.target.value)} />
         <div className="sheet__list">
-          {sorted.map((ex) => (
-            <button key={ex.id} className="sheet__i" onClick={() => onPick(ex.id)}>
-              <span className="sheet__iname"><CapDot capability={ex.capabilities?.[0]} />{ex.name}</span>
-              <span className="sheet__g">{ex.group} · {MODES[ex.mode]?.label || ex.mode}</span>
-            </button>
-          ))}
+          {sorted.map((ex) => {
+            const samePattern = fromEx && ex.capabilities?.some((c) => fromEx.capabilities?.includes(c));
+            const conv = samePattern && fromBest > 0 && ex.id !== fromEx.id
+              ? equivalentLoad(fromBest, fromEx.id, ex.id, data, unit) : null;
+            return (
+              <button key={ex.id} className="sheet__i" onClick={() => onPick(ex.id)}>
+                <span className="sheet__iname"><CapDot capability={ex.capabilities?.[0]} />{ex.name}</span>
+                <span className="sheet__g">
+                  {conv ? `≈${conv.value}${unit}${conv.estimate ? " (est.)" : ""}` : `${ex.group} · ${MODES[ex.mode]?.label || ex.mode}`}
+                </span>
+              </button>
+            );
+          })}
           {sorted.length === 0 && <div className="empty">No match. Add it below.</div>}
         </div>
         <div className="sheet__add">
@@ -771,7 +785,9 @@ export default function SwolleyMammoths() {
     if (picker.mode === "swap") {
       updateSession((w) => ({
         ...w,
-        queue: w.queue.map((q) => (q.id === picker.itemId ? { ...q, exerciseId: exId, swapped: true } : q)),
+        queue: w.queue.map((q) => (q.id === picker.itemId
+          ? { ...q, exerciseId: exId, swapped: true, originalExerciseId: picker.originalExerciseId }
+          : q)),
       }));
     } else if (picker.mode === "add") {
       updateSession((w) => ({
@@ -916,7 +932,7 @@ export default function SwolleyMammoths() {
 
   const setsDone = (exId) => (session ? session.sets.filter((s) => s.exerciseId === exId && isCounted(s)).length : 0);
   const pickerEl = picker && (
-    <Picker data={data} picker={picker} onPick={handlePick} onClose={() => setPicker(null)}
+    <Picker data={data} unit={unit} picker={picker} onPick={handlePick} onClose={() => setPicker(null)}
       newName={newName} setNewName={setNewName} newMode={newMode} setNewMode={setNewMode}
       newCap={newCap} setNewCap={setNewCap}
       addExercise={addExercise} />
@@ -1333,7 +1349,10 @@ export default function SwolleyMammoths() {
                       <div className="qitem__ctl">
                         <button onClick={() => moveQueueItem(i, -1)} aria-label="move up">↑</button>
                         <button onClick={() => moveQueueItem(i, 1)} aria-label="move down">↓</button>
-                        <button className="swap" onClick={() => setPicker({ mode: "swap", itemId: q.id, group: ex?.group })}>swap</button>
+                        <button className="swap" onClick={() => setPicker({
+                          mode: "swap", itemId: q.id, group: ex?.group,
+                          fromExerciseId: q.exerciseId, originalExerciseId: q.originalExerciseId || q.exerciseId,
+                        })}>swap</button>
                         <button onClick={() => updateSession((w) => ({ ...w, queue: w.queue.filter((x) => x.id !== q.id) }))}
                           aria-label="remove">×</button>
                       </div>
@@ -1459,12 +1478,17 @@ export default function SwolleyMammoths() {
 
             <div className="cardgrid">
               {data.exercises.map((ex) => {
-                const pts = [];
-                data.workouts.slice().sort((a, b) => (a.date > b.date ? 1 : -1)).forEach((w) => {
+                const direct = [];
+                data.workouts.forEach((w) => {
                   const s = w.sets.filter((x) => x.exerciseId === ex.id && isCounted(x));
-                  if (s.length) pts.push(Math.max(...s.map((x) => setScore(x, ex, unit, bodyweight))));
+                  if (s.length) direct.push({ date: w.date, score: Math.max(...s.map((x) => setScore(x, ex, unit, bodyweight))) });
                 });
-                if (!pts.length) return null;
+                // §8.3 — sessions where a swap substituted for this exercise still
+                // join its trend line, converted onto its scale
+                const subs = substitutedPoints(data, ex.id, unit);
+                const merged = [...direct, ...subs].sort((a, b) => (a.date < b.date ? -1 : 1));
+                if (!merged.length) return null;
+                const pts = merged.map((p) => p.score);
                 const trend = pts.length > 1 ? pts[pts.length - 1] - pts[0] : 0;
                 const best = Math.max(...pts);
                 return (
@@ -1472,7 +1496,8 @@ export default function SwolleyMammoths() {
                     <div className="lift__l">
                       <div className="lift__name"><CapDot capability={ex.capabilities?.[0]} />{ex.name}</div>
                       <div className="lift__meta">
-                        {pts.length} session{pts.length > 1 ? "s" : ""} · best{" "}
+                        {merged.length} session{merged.length > 1 ? "s" : ""}
+                        {subs.length > 0 ? ` (${subs.length} via swap)` : ""} · best{" "}
                         {ex.mode === "timed" ? mmss(best) : ex.mode === "cardio" ? `${round1(best)} mi/min` : `${round1(best)}${unit}`}
                       </div>
                     </div>
@@ -1502,9 +1527,14 @@ export default function SwolleyMammoths() {
                   </div>
                   {Object.entries(byEx).map(([exId, sets]) => {
                     const ex = exById(exId);
+                    const sub = w.queue?.find((q) => q.exerciseId === exId && q.originalExerciseId && q.originalExerciseId !== exId);
+                    const subFrom = sub ? exById(sub.originalExerciseId) : null;
                     return (
                       <div className="sesh__ex" key={exId}>
-                        <div className="sesh__exname">{ex ? ex.name : "—"}</div>
+                        <div className="sesh__exname">
+                          {ex ? ex.name : "—"}
+                          {subFrom && <span className="sesh__sub">sub for {subFrom.name}</span>}
+                        </div>
                         <div className="sesh__sets">
                           {sets.map((s) => <span className="chip" key={s.id}>{setLabel(s, ex, unit)}</span>)}
                         </div>
@@ -1797,6 +1827,7 @@ const CSS = `
 .sesh__date{color:var(--chalk);}
 .sesh__ex{margin-top:12px;}
 .sesh__exname{font-size:13.5px;font-weight:550;}
+.sesh__sub{font-family:var(--mono);font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--gold);margin-left:8px;}
 .sesh__sets{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;}
 .chip{font-family:var(--mono);font-size:11.5px;padding:4px 8px;background:var(--raised);border:1px solid var(--line);border-radius:4px;}
 .export{width:100%;margin-top:22px;padding:13px;border:1px solid var(--line);border-radius:8px;font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);}

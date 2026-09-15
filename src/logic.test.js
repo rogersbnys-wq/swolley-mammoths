@@ -7,6 +7,7 @@ import {
   coachInsights, planCoverage, suggestPlanForCapability, goalVerdict,
   evaluatePlanOnSave, volumeByCapability, progressionPct, trajectoryDivergence,
   balancedScorecard, rankedChanges, describeCapabilities, patternSide, planAllItems,
+  personalRatio, equivalentLoad, substitutedPoints,
   mostTrainedExercise, topVerdict, CAPABILITY_COLORS,
   needsBackupReminder, importData, generateWarmupRamp,
   GOAL_TEMPLATES, SEED_EXERCISES, SEED_PLANS, CAPABILITIES,
@@ -564,6 +565,64 @@ describe("planAllItems", () => {
   });
   it("returns an empty array for a plan with neither", () => {
     expect(planAllItems({ id: "p1" })).toEqual([]);
+  });
+});
+
+describe("movement equivalence", () => {
+  // real seed ids, since EQUIVALENCE_DEFAULT_COEFFICIENT is keyed on the catalog:
+  // e1 = Back Squat (coefficient 1), e13 = Leg Press (coefficient 1.8)
+  const exercises = [barbell("e1", "Back Squat", ["squat"]), barbell("e13", "Leg Press", ["squat"])];
+
+  it("has no personal ratio until both exercises have history", () => {
+    const data = { exercises, workouts: [] };
+    expect(personalRatio(data, "e1", "e13", "lb")).toBeNull();
+  });
+
+  it("computes the user's own ratio once both have logged sets", () => {
+    const data = { exercises, workouts: [
+      { date: "2026-01-01", sets: [{ exerciseId: "e1", weight: 200, reps: 5, unit: "lb" }] },
+      { date: "2026-01-02", sets: [{ exerciseId: "e13", weight: 400, reps: 5, unit: "lb" }] },
+    ] };
+    const ratio = personalRatio(data, "e1", "e13", "lb");
+    expect(ratio).toBeGreaterThan(0);
+    // equivalentLoad should use this personal ratio, not the population default (1.8)
+    const conv = equivalentLoad(200, "e1", "e13", data, "lb");
+    expect(conv.estimate).toBe(false);
+    expect(conv.value).toBeCloseTo(200 * ratio, 5);
+  });
+
+  it("falls back to the population-default coefficient and labels it an estimate", () => {
+    const data = { exercises, workouts: [] };
+    const conv = equivalentLoad(200, "e1", "e13", data, "lb");
+    expect(conv.estimate).toBe(true);
+    expect(conv.value).toBeCloseTo(360, 5); // 200 * (1.8/1)
+  });
+
+  it("is a no-op converting an exercise to itself", () => {
+    const data = { exercises, workouts: [] };
+    expect(equivalentLoad(200, "e1", "e1", data, "lb")).toEqual({ value: 200, estimate: false });
+  });
+
+  it("substitutedPoints finds converted sessions logged against a swap-in, tied to the original via originalExerciseId", () => {
+    const data = {
+      exercises,
+      workouts: [{
+        date: "2026-01-05", queue: [{ id: "q1", exerciseId: "e13", originalExerciseId: "e1", swapped: true }],
+        sets: [{ exerciseId: "e13", weight: 400, reps: 5, unit: "lb" }],
+      }],
+    };
+    const points = substitutedPoints(data, "e1", "lb");
+    expect(points).toHaveLength(1);
+    expect(points[0].viaId).toBe("e13");
+    expect(points[0].estimate).toBe(true); // no personal ratio logged yet
+  });
+
+  it("substitutedPoints ignores queue items that were never actually swapped", () => {
+    const data = {
+      exercises,
+      workouts: [{ date: "2026-01-05", queue: [{ id: "q1", exerciseId: "e1" }], sets: [] }],
+    };
+    expect(substitutedPoints(data, "e1", "lb")).toEqual([]);
   });
 });
 

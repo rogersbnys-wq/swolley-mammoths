@@ -689,6 +689,84 @@ export function coachInsights(data, unit, now = new Date()) {
 }
 
 /* ============================================================
+   §8.3 — movement-equivalence model
+   Each catalog exercise carries a default strength coefficient
+   relative to a reference lift for its capability (population
+   defaults — "hack squat, leg press, and back squat are the same
+   line with different multipliers"). Once the user has logged both
+   movements, their own ratio replaces the default.
+   ============================================================ */
+
+export const EQUIVALENCE_REFERENCE = {
+  squat: "e1", hinge: "e3", horizontal_press: "e2", vertical_press: "e4",
+  horizontal_pull: "e5", vertical_pull: "e9", carry: "e16",
+};
+
+/* population-default coefficient relative to that capability's
+   reference exercise (1 = same load family; a custom or unlisted
+   exercise defaults to 1, i.e. "assume equivalent" until proven
+   otherwise) */
+export const EQUIVALENCE_DEFAULT_COEFFICIENT = {
+  e1: 1, e13: 1.8,
+  e3: 1, e6: 0.85, e14: 0.5,
+  e2: 1, e7: 0.4, e15: 0.45,
+  e4: 1,
+  e5: 1, e8: 0.4,
+  e9: 1, e12: 1.3,
+  e16: 1,
+};
+
+/* the user's own ratio between two exercises' best logged scores —
+   null until they've logged both, per §8.3's acceptance criteria */
+export function personalRatio(data, fromExId, toExId, unit) {
+  const fromEx = data.exercises.find((e) => e.id === fromExId);
+  const toEx = data.exercises.find((e) => e.id === toExId);
+  if (!fromEx || !toEx) return null;
+  const bw = currentBodyweight(data, unit);
+  const fromBest = bestScore(data.workouts, fromExId, fromEx, unit, bw);
+  const toBest = bestScore(data.workouts, toExId, toEx, unit, bw);
+  if (fromBest <= 0 || toBest <= 0) return null;
+  return toBest / fromBest;
+}
+
+/* converts a load from one exercise onto another's scale — the
+   user's own ratio when there's history on both, otherwise the
+   population-default coefficients, explicitly labeled an estimate */
+export function equivalentLoad(value, fromExId, toExId, data, unit) {
+  if (fromExId === toExId) return { value: round1(value), estimate: false };
+  const personal = personalRatio(data, fromExId, toExId, unit);
+  if (personal != null) return { value: round1(value * personal), estimate: false };
+  const cFrom = EQUIVALENCE_DEFAULT_COEFFICIENT[fromExId] ?? 1;
+  const cTo = EQUIVALENCE_DEFAULT_COEFFICIENT[toExId] ?? 1;
+  return { value: round1(value * (cTo / cFrom)), estimate: true };
+}
+
+/* §8.3 — cross-exercise progression continuity: sessions logged
+   against a substitute exercise, converted onto the original's scale,
+   so a swap doesn't leave a hole in the trend line. Looks at the
+   queue's `originalExerciseId` (set when a swap happens), not just
+   name-matching, so it only picks up genuine substitutions. */
+export function substitutedPoints(data, exId, unit) {
+  const ex = data.exercises.find((e) => e.id === exId);
+  if (!ex) return [];
+  const bw = currentBodyweight(data, unit);
+  const points = [];
+  data.workouts.forEach((w) => {
+    (w.queue || []).forEach((q) => {
+      if (q.originalExerciseId !== exId || q.exerciseId === exId) return;
+      const subEx = data.exercises.find((e) => e.id === q.exerciseId);
+      if (!subEx) return;
+      const subSets = w.sets.filter((s) => s.exerciseId === q.exerciseId && isCounted(s));
+      if (!subSets.length) return;
+      const best = Math.max(...subSets.map((s) => setScore(s, subEx, unit, bw)));
+      const conv = equivalentLoad(best, subEx.id, exId, data, unit);
+      points.push({ date: w.date, score: conv.value, estimate: conv.estimate, viaId: subEx.id, viaName: subEx.name });
+    });
+  });
+  return points;
+}
+
+/* ============================================================
    PHASE 4 — the Coach evaluation engine
    Both lenses (goal-fitness and balance) are queries over the same
    three inputs: plans, logs, goals.
