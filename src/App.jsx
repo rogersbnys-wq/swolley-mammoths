@@ -410,6 +410,38 @@ function EditSetSheet({ set, ex, unit, spec, onSave, onClose }) {
   );
 }
 
+/* §6.1 step 6 — rest countdown against the plan's prescribed rest,
+   with +30s/skip and a vibration at zero. Owns its own interval so
+   the parent only needs to hand it an end time. */
+function RestTimer({ endAt, total, onExtend, onSkip }) {
+  const [remaining, setRemaining] = useState(Math.max(0, Math.round((endAt - Date.now()) / 1000)));
+
+  useEffect(() => {
+    const tick = () => {
+      const r = Math.max(0, Math.round((endAt - Date.now()) / 1000));
+      setRemaining(r);
+      if (r === 0 && navigator.vibrate) navigator.vibrate(400);
+    };
+    tick();
+    const id = setInterval(tick, 250);
+    return () => clearInterval(id);
+  }, [endAt]);
+
+  const pct = total > 0 ? Math.max(0, Math.min(1, remaining / total)) : 0;
+  return (
+    <div className="resttimer">
+      <div className="resttimer__bar"><div className="resttimer__fill" style={{ width: `${pct * 100}%` }} /></div>
+      <div className="resttimer__row">
+        <span className="resttimer__time">{remaining > 0 ? mmss(remaining) : "Rest done"}</span>
+        <div className="resttimer__ctl">
+          <button onClick={onExtend}>+30s</button>
+          <button onClick={onSkip}>Skip</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ============================================================
    APP
    ============================================================ */
@@ -446,6 +478,7 @@ export default function SwolleyMammoths() {
   const [planCritique, setPlanCritique] = useState(null);
   const [editingSetId, setEditingSetId] = useState(null);
   const [lastDeleted, setLastDeleted] = useState(null);
+  const [rest, setRest] = useState(null); // { endAt, total } | null
 
   useEffect(() => { setData(loadData() || seed()); }, []);
   useEffect(() => { if (data) saveData(data); }, [data]);
@@ -565,6 +598,7 @@ export default function SwolleyMammoths() {
     setRir(null);
     setWarmupFlag(false);
     setPainFlag(false);
+    setRest(null);
     const prior = priorSessionFor(exId);
     const src = prior?.sets.filter((s) => s.exerciseId === exId).slice(-1)[0];
     if (src) {
@@ -634,6 +668,14 @@ export default function SwolleyMammoths() {
     setPainFlag(false);
     setFlash({ pr: isPR, score: round1(score), mode, scheme });
     setTimeout(() => setFlash(null), 2600);
+
+    /* §6.1 step 6 — auto-start rest after a real working set; AMRAP/EMOM
+       carry their own timing and a warmup doesn't need a rest clock */
+    if (!warmupFlag && scheme === "straight" && mode !== "cardio") {
+      const queueItem = session?.queue.find((q) => q.exerciseId === openEx.id);
+      const restSeconds = queueItem?.rest ?? 90;
+      setRest({ endAt: Date.now() + restSeconds * 1000, total: restSeconds });
+    }
   };
 
   /* §8.1 — a deleted set can be restored within 6 seconds; the set
@@ -709,10 +751,10 @@ export default function SwolleyMammoths() {
     } else if (picker.mode === "add") {
       updateSession((w) => ({
         ...w,
-        queue: [...w.queue, { id: uid(), exerciseId: exId, note: "", sets: 3, reps: 8 }],
+        queue: [...w.queue, { id: uid(), exerciseId: exId, note: "", sets: 3, reps: 8, rest: 90 }],
       }));
     } else if (picker.mode === "planAdd") {
-      setEditingPlan((p) => ({ ...p, items: [...p.items, { exerciseId: exId, note: "", sets: 3, reps: 8 }] }));
+      setEditingPlan((p) => ({ ...p, items: [...p.items, { exerciseId: exId, note: "", sets: 3, reps: 8, rest: 90 }] }));
     } else if (picker.mode === "freestyle") {
       openExercise(exId);
     }
@@ -835,7 +877,7 @@ export default function SwolleyMammoths() {
       <div className="app">
         <style>{CSS}</style>
         <header className="hd">
-          <button className="back" onClick={() => setOpenExId(null)} aria-label="back">‹</button>
+          <button className="back" onClick={() => { setOpenExId(null); setRest(null); }} aria-label="back">‹</button>
           <div className="hd__l">
             <div className="hd__ex">{openEx.name}</div>
             <div className="hd__date">
@@ -975,6 +1017,12 @@ export default function SwolleyMammoths() {
             <div className={`flash ${flash.pr ? "flash--pr" : ""}`}>
               {flash.pr ? flashLabel(flash) : "Logged"}
             </div>
+          )}
+
+          {rest && (
+            <RestTimer endAt={rest.endAt} total={rest.total}
+              onExtend={() => setRest((r) => (r ? { ...r, endAt: r.endAt + 30000, total: r.total + 30 } : r))}
+              onSkip={() => setRest(null)} />
           )}
 
           <section className="sets">
@@ -1121,7 +1169,10 @@ export default function SwolleyMammoths() {
                   <span>sets ×</span>
                   <input type="number" inputMode="numeric" value={it.reps}
                     onChange={(e) => patchPlanItem(i, { reps: +e.target.value })} />
-                  <span>reps</span>
+                  <span>reps · rest</span>
+                  <input type="number" inputMode="numeric" value={it.rest ?? 90}
+                    onChange={(e) => patchPlanItem(i, { rest: +e.target.value })} />
+                  <span>s</span>
                 </div>
                 <input className="pitem__note" placeholder="Cue — machine, grip, form focus" value={it.note}
                   onChange={(e) => patchPlanItem(i, { note: e.target.value })} />
@@ -1553,6 +1604,14 @@ const CSS = `
 .warmupramp{margin-top:8px;}
 .undotoast{display:flex;justify-content:space-between;align-items:center;margin-top:10px;padding:10px 14px;background:#2C313A;border-radius:6px;font-size:13px;}
 .undotoast button{font-family:var(--mono);font-size:11px;color:var(--gold);font-weight:600;}
+
+.resttimer{margin-top:10px;padding:12px 14px;background:var(--raised);border:1px solid var(--gold);border-radius:8px;}
+.resttimer__bar{height:4px;background:#2C313A;border-radius:2px;overflow:hidden;}
+.resttimer__fill{height:100%;background:var(--gold);transition:width 250ms linear;}
+.resttimer__row{display:flex;justify-content:space-between;align-items:center;margin-top:9px;}
+.resttimer__time{font-family:var(--mono);font-size:20px;font-weight:600;}
+.resttimer__ctl{display:flex;gap:6px;}
+.resttimer__ctl button{font-family:var(--mono);font-size:10.5px;color:var(--dim);border:1px solid var(--line);border-radius:5px;padding:6px 10px;}
 .row--warmup{opacity:.6;}
 .row__n{font-family:var(--mono);font-size:11px;color:var(--dim);}
 .row__main{font-family:var(--mono);font-size:17px;}
