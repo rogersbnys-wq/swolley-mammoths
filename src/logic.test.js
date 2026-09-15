@@ -7,7 +7,7 @@ import {
   coachInsights, planCoverage, suggestPlanForCapability, goalVerdict,
   evaluatePlanOnSave, volumeByCapability, progressionPct, trajectoryDivergence,
   balancedScorecard, rankedChanges, describeCapabilities, patternSide, planAllItems,
-  personalRatio, equivalentLoad, substitutedPoints, adherence, domainBalance,
+  personalRatio, equivalentLoad, substitutedPoints, adherence, domainBalance, sessionSummary,
   mostTrainedExercise, topVerdict, CAPABILITY_COLORS,
   needsBackupReminder, importData, generateWarmupRamp,
   GOAL_TEMPLATES, SEED_EXERCISES, SEED_PLANS, CAPABILITIES,
@@ -623,6 +623,48 @@ describe("movement equivalence", () => {
       workouts: [{ date: "2026-01-05", queue: [{ id: "q1", exerciseId: "e1" }], sets: [] }],
     };
     expect(substitutedPoints(data, "e1", "lb")).toEqual([]);
+  });
+});
+
+describe("sessionSummary", () => {
+  const exercises = [barbell("bench", "Bench", ["horizontal_press"])];
+
+  it("counts sets, tonnage, and PRs, excluding warmups from tonnage", () => {
+    const workout = {
+      date: "2026-01-01",
+      sets: [
+        { exerciseId: "bench", weight: 45, reps: 5, unit: "lb", warmup: true, ts: 1000 },
+        { exerciseId: "bench", weight: 135, reps: 5, unit: "lb", warmup: false, pr: true, ts: 2000 },
+        { exerciseId: "bench", weight: 135, reps: 5, unit: "lb", warmup: false, ts: 3000 },
+      ],
+    };
+    const s = sessionSummary(workout, { exercises, workouts: [workout] }, "lb");
+    expect(s.totalSets).toBe(3);
+    expect(s.countedSets).toBe(2);
+    expect(s.tonnage).toBe(1350); // 135*5 + 135*5, warmup excluded
+    expect(s.prs).toBe(1);
+  });
+
+  it("estimates duration from the spread of set timestamps", () => {
+    const workout = { date: "2026-01-01", sets: [
+      { exerciseId: "bench", weight: 100, reps: 5, ts: 0 },
+      { exerciseId: "bench", weight: 100, reps: 5, ts: 5 * 60000 },
+    ] };
+    const s = sessionSummary(workout, { exercises, workouts: [workout] }, "lb");
+    expect(s.durationMin).toBe(5);
+  });
+
+  it("returns a null duration with fewer than two timestamps", () => {
+    const workout = { date: "2026-01-01", sets: [{ exerciseId: "bench", weight: 100, reps: 5, ts: 0 }] };
+    const s = sessionSummary(workout, { exercises, workouts: [workout] }, "lb");
+    expect(s.durationMin).toBeNull();
+  });
+
+  it("caps coaching lines at 3", () => {
+    const workout = { date: "2026-01-01", sets: [{ exerciseId: "bench", weight: 100, reps: 5, ts: 0 }] };
+    const data = { exercises, workouts: [workout], profile: {} };
+    const s = sessionSummary(workout, data, "lb");
+    expect(s.insights.length).toBeLessThanOrEqual(3);
   });
 });
 

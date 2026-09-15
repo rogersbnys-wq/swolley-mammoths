@@ -460,7 +460,7 @@ export function migrate(data) {
       queue: [], planName: "Freestyle",
       ...w,
       sets: w.sets.map((s) => ({
-        unit: unitFallback, note: "", seconds: 0, warmup: false, pain: false,
+        unit: unitFallback, note: "", seconds: 0, warmup: false, pain: false, pr: false,
         scheme: "straight", distance: 0, heartRate: null,
         capMinutes: 0, totalReps: 0,
         intervalMinutes: 1, totalIntervals: 0, repsPerInterval: 0, missedIntervals: 0,
@@ -764,6 +764,25 @@ export function substitutedPoints(data, exId, unit) {
     });
   });
   return points;
+}
+
+/* §6.1 step 9 — sets, duration, volume, PRs, and 1-3 coaching lines
+   at the close of a session. Duration is a proxy (first set's
+   timestamp to the last), since sessions don't otherwise carry a
+   start/end time — good enough for a summary, not exact to the second. */
+export function sessionSummary(workout, data, unit) {
+  const sets = workout.sets.filter(isCounted);
+  const exIds = [...new Set(workout.sets.map((s) => s.exerciseId))];
+  const tonnage = sets.reduce((sum, s) => {
+    const ex = data.exercises.find((e) => e.id === s.exerciseId);
+    if (!ex || (s.scheme || "straight") !== "straight" || !["barbell", "dumbbell", "machine"].includes(ex.mode)) return sum;
+    return sum + wIn(s, unit) * (s.reps || 0);
+  }, 0);
+  const prs = workout.sets.filter((s) => s.pr).length;
+  const timestamps = workout.sets.map((s) => s.ts).filter((t) => t != null);
+  const durationMin = timestamps.length >= 2 ? Math.round((Math.max(...timestamps) - Math.min(...timestamps)) / 60000) : null;
+  const insights = coachInsights(data, unit).filter((i) => !i.exerciseId || exIds.includes(i.exerciseId)).slice(0, 3);
+  return { totalSets: workout.sets.length, countedSets: sets.length, tonnage: round1(tonnage), prs, durationMin, insights };
 }
 
 /* ============================================================

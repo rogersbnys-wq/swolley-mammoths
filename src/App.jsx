@@ -8,7 +8,7 @@ import {
   goalVerdict, evaluatePlanOnSave, balancedScorecard, rankedChanges,
   describeCapabilities, mostTrainedExercise, topVerdict,
   needsBackupReminder, importData, generateWarmupRamp, planAllItems,
-  equivalentLoad, substitutedPoints, adherence,
+  equivalentLoad, substitutedPoints, adherence, sessionSummary,
 } from "./logic.js";
 
 /* a small colored dot for an exercise's primary capability — the
@@ -495,6 +495,7 @@ export default function SwolleyMammoths() {
   const [rest, setRest] = useState(null); // { endAt, total } | null
   const [dayPicker, setDayPicker] = useState(null); // { planId, action: "start" | "load" } | null
   const [activeDay, setActiveDay] = useState(0); // which day of a multi-day program is being edited
+  const [showSummary, setShowSummary] = useState(false);
 
   useEffect(() => { setData(loadData() || seed()); }, []);
   useEffect(() => { if (data) saveData(data); }, [data]);
@@ -693,6 +694,7 @@ export default function SwolleyMammoths() {
     }
     const score = setScore(set, openEx, unit, bodyweight);
     const isPR = !warmupFlag && score > bestEver + 0.01;
+    set = { ...set, pr: isPR };
 
     if (!session) {
       setData((d) => ({
@@ -1285,6 +1287,39 @@ export default function SwolleyMammoths() {
     );
   }
 
+  /* ============ SESSION SUMMARY (§6.1 step 9) ============ */
+  if (showSummary && session) {
+    const summary = sessionSummary(session, data, unit);
+    return (
+      <div className="app">
+        <style>{CSS}</style>
+        <header className="hd">
+          <div className="hd__l">
+            <div className="hd__ex">Session complete</div>
+            <div className="hd__date">{session.planName}</div>
+          </div>
+        </header>
+        <main className="body">
+          <div className="summarygrid">
+            <div className="summarystat"><span className="summarystat__n">{summary.countedSets}</span><span className="summarystat__l">sets</span></div>
+            <div className="summarystat"><span className="summarystat__n">{summary.durationMin != null ? `${summary.durationMin}m` : "—"}</span><span className="summarystat__l">duration</span></div>
+            <div className="summarystat"><span className="summarystat__n">{summary.tonnage > 0 ? `${round1(summary.tonnage)}${unit}` : "—"}</span><span className="summarystat__l">volume</span></div>
+            <div className="summarystat"><span className="summarystat__n summarystat__n--gold">{summary.prs}</span><span className="summarystat__l">PR{summary.prs === 1 ? "" : "s"}</span></div>
+          </div>
+
+          {summary.insights.length > 0 && (
+            <div className="summarycoach">
+              <div className="prompt">From the Coach</div>
+              {summary.insights.map((ins, i) => <div key={i} className={`insight insight--${ins.severity}`}>{ins.text}</div>)}
+            </div>
+          )}
+
+          <button className="log" onClick={() => setShowSummary(false)}>Done</button>
+        </main>
+      </div>
+    );
+  }
+
   /* ============ TABS ============ */
   return (
     <div className="app">
@@ -1366,6 +1401,9 @@ export default function SwolleyMammoths() {
                 <button className="ghost" onClick={() => setPicker({ mode: "add" })}>+ Add a single exercise</button>
                 {session.queue.length === 0 && (
                   <div className="empty">Freestyle session — add exercises as you go.</div>
+                )}
+                {session.sets.length > 0 && (
+                  <button className="log finishsession" onClick={() => setShowSummary(true)}>Finish session</button>
                 )}
               </>
             )}
@@ -1769,6 +1807,14 @@ const CSS = `
 .proj__best{margin-left:auto;color:var(--gold);}
 
 .log{width:100%;margin-top:12px;padding:17px;background:var(--chalk);color:#1A1D22;border-radius:8px;font-size:15px;font-weight:650;transition:transform 90ms;}
+.finishsession{background:var(--gold);margin-top:20px;}
+
+.summarygrid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px;}
+.summarystat{background:var(--raised);border:1px solid var(--line);border-radius:10px;padding:16px;display:flex;flex-direction:column;gap:4px;}
+.summarystat__n{font-family:var(--mono);font-size:26px;font-weight:600;}
+.summarystat__n--gold{color:var(--gold);}
+.summarystat__l{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);}
+.summarycoach{margin-top:22px;}
 .log:active{transform:scale(.985);}
 
 .flash{margin-top:10px;padding:10px 14px;border-radius:6px;font-family:var(--mono);font-size:11.5px;background:#2C313A;color:var(--dim);animation:rise 240ms ease-out both;}
