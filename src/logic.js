@@ -211,6 +211,30 @@ function ageDays(key, now = Date.now()) {
   return (now - new Date(y, m - 1, d).getTime()) / 86400000;
 }
 
+/* §8.1 — a one-tap warmup ramp up to a working weight: the bar, then
+   ~40/60/80% steps rounded to a loadable plate increment, tapering
+   reps as the load climbs. Below the bar weight there's nothing to
+   ramp — just the bar itself. */
+export function generateWarmupRamp(workingWeight, unit) {
+  const spec = PLATE_SPEC[unit];
+  const bar = spec.bar;
+  if (workingWeight <= bar) return [{ weight: bar, reps: 5 }];
+
+  const steps = [
+    { pct: 0.4, reps: 5 },
+    { pct: 0.6, reps: 3 },
+    { pct: 0.8, reps: 1 },
+  ].map(({ pct, reps }) => {
+    const raw = bar + (workingWeight - bar) * pct;
+    const rounded = Math.round(raw / spec.step) * spec.step;
+    return { weight: Math.min(Math.max(rounded, bar), workingWeight - spec.step), reps };
+  });
+
+  const ramp = [{ weight: bar, reps: 5 }, ...steps];
+  // keep it strictly ascending — rounding can collapse two close steps together
+  return ramp.filter((s, i) => i === 0 || s.weight > ramp[i - 1].weight);
+}
+
 export function platesPerSide(total, unit) {
   const spec = PLATE_SPEC[unit];
   let rem = (total - spec.bar) / 2;

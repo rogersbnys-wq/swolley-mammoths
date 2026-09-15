@@ -8,7 +8,7 @@ import {
   evaluatePlanOnSave, volumeByCapability, progressionPct, trajectoryDivergence,
   balancedScorecard, rankedChanges, describeCapabilities, patternSide,
   mostTrainedExercise, topVerdict, CAPABILITY_COLORS,
-  needsBackupReminder, importData,
+  needsBackupReminder, importData, generateWarmupRamp,
   GOAL_TEMPLATES, SEED_EXERCISES, SEED_PLANS, CAPABILITIES,
 } from "./logic.js";
 
@@ -851,6 +851,28 @@ describe("CAPABILITY_COLORS", () => {
   });
   it("produces valid hsl() strings", () => {
     Object.values(CAPABILITY_COLORS).forEach((c) => expect(c).toMatch(/^hsl\(\d+, \d+%, \d+%\)$/));
+  });
+});
+
+describe("generateWarmupRamp", () => {
+  it("is just the bar when the working weight is at or below it", () => {
+    expect(generateWarmupRamp(45, "lb")).toEqual([{ weight: 45, reps: 5 }]);
+    expect(generateWarmupRamp(30, "lb")).toEqual([{ weight: 45, reps: 5 }]);
+  });
+  it("builds an ascending ramp from the bar up to (but not reaching) the working weight", () => {
+    const ramp = generateWarmupRamp(225, "lb");
+    expect(ramp[0]).toEqual({ weight: 45, reps: 5 });
+    for (let i = 1; i < ramp.length; i++) expect(ramp[i].weight).toBeGreaterThan(ramp[i - 1].weight);
+    ramp.forEach((s) => expect(s.weight).toBeLessThan(225));
+  });
+  it("never produces a weight below the bar, even for a light working weight just above it", () => {
+    const ramp = generateWarmupRamp(50, "lb");
+    ramp.forEach((s) => expect(s.weight).toBeGreaterThanOrEqual(45));
+  });
+  it("works in kg with the kg bar and step", () => {
+    const ramp = generateWarmupRamp(100, "kg");
+    expect(ramp[0]).toEqual({ weight: 20, reps: 5 });
+    ramp.forEach((s) => expect(s.weight % 2.5).toBeCloseTo(0, 5));
   });
 });
 

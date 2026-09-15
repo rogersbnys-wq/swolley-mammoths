@@ -7,7 +7,7 @@ import {
   canArmTarget, pace, bodyweightAdjustedStrength, coachInsights,
   goalVerdict, evaluatePlanOnSave, balancedScorecard, rankedChanges,
   describeCapabilities, mostTrainedExercise, topVerdict,
-  needsBackupReminder, importData,
+  needsBackupReminder, importData, generateWarmupRamp,
 } from "./logic.js";
 
 /* a small colored dot for an exercise's primary capability — the
@@ -361,6 +361,55 @@ function ArmTargetSheet({ goal, data, unit, onSave, onClose }) {
   );
 }
 
+/* §8.1 — edit a logged set in place. AMRAP/EMOM's timing fields
+   aren't editable here (delete + re-log covers that rare case);
+   weight, reps/seconds/distance, note, warmup, and pain are. */
+function EditSetSheet({ set, ex, unit, spec, onSave, onClose }) {
+  const [weight, setWeight] = useState(set.weight || 0);
+  const [reps, setReps] = useState(set.reps || 0);
+  const [seconds, setSeconds] = useState(set.seconds || 0);
+  const [distance, setDistance] = useState(set.distance || 0);
+  const [note, setNote] = useState(set.note || "");
+  const [warmup, setWarmup] = useState(!!set.warmup);
+  const [pain, setPain] = useState(!!set.pain);
+  const scheme = set.scheme || "straight";
+  const cfg = MODES[ex.mode] || MODES.barbell;
+
+  const save = () => onSave(set.id, { weight, reps, seconds, distance, note: note.trim(), warmup, pain });
+
+  return (
+    <div className="sheet" onClick={onClose}>
+      <div className="sheet__in" onClick={(e) => e.stopPropagation()}>
+        <div className="sheet__hd">Edit set</div>
+        {scheme !== "straight" ? (
+          <div className="sheet__hint">
+            AMRAP/EMOM timing isn't editable here — delete and re-log to change it. You can still edit the note or flags below.
+          </div>
+        ) : (
+          <div className="entry__steppers" style={{ padding: "0 18px" }}>
+            {(cfg.fields.includes("weight") || cfg.fields.includes("added")) && (
+              <Stepper label={cfg.fields.includes("added") ? "Added" : "Weight"} value={weight} onChange={setWeight}
+                step={spec.step} min={0} suffix={cfg.perHand ? `${unit}/hand` : unit} />
+            )}
+            {cfg.fields.includes("reps") && <Stepper label="Reps" value={reps} onChange={setReps} step={1} min={0} />}
+            {cfg.fields.includes("distance") && <Stepper label="Distance" value={distance} onChange={setDistance} step={0.1} min={0} suffix="mi" />}
+            {cfg.fields.includes("seconds") && (
+              <Stepper label="Time" value={seconds} onChange={setSeconds} step={5} min={0} display={mmss} toDraft={mmss} fromDraft={parseMMSS} />
+            )}
+          </div>
+        )}
+        <input className="notefield" style={{ margin: "12px 18px", width: "calc(100% - 36px)" }} value={note}
+          onChange={(e) => setNote(e.target.value)} placeholder="Note" />
+        <div className="flags" style={{ padding: "0 18px" }}>
+          <button className={`flags__b ${warmup ? "on" : ""}`} onClick={() => setWarmup((v) => !v)}>Warmup</button>
+          <button className={`flags__b flags__b--pain ${pain ? "on" : ""}`} onClick={() => setPain((v) => !v)}>⚠ Pain</button>
+        </div>
+        <button className="sheet__addb goal__save" onClick={save}>Save changes</button>
+      </div>
+    </div>
+  );
+}
+
 /* ============================================================
    APP
    ============================================================ */
@@ -395,6 +444,8 @@ export default function SwolleyMammoths() {
   const [goalSheet, setGoalSheet] = useState(false);
   const [armingGoalId, setArmingGoalId] = useState(null);
   const [planCritique, setPlanCritique] = useState(null);
+  const [editingSetId, setEditingSetId] = useState(null);
+  const [lastDeleted, setLastDeleted] = useState(null);
 
   useEffect(() => { setData(loadData() || seed()); }, []);
   useEffect(() => { if (data) saveData(data); }, [data]);
@@ -585,7 +636,49 @@ export default function SwolleyMammoths() {
     setTimeout(() => setFlash(null), 2600);
   };
 
-  const deleteSet = (setId) => updateSession((w) => ({ ...w, sets: w.sets.filter((s) => s.id !== setId) }));
+  /* §8.1 — a deleted set can be restored within 6 seconds; the set
+     itself (not just an id) is captured since it's already gone from
+     `data` by the time the undo window is showing */
+  const deleteSet = (setId) => {
+    const removed = session?.sets.find((s) => s.id === setId);
+    updateSession((w) => ({ ...w, sets: w.sets.filter((s) => s.id !== setId) }));
+    if (!removed) return;
+    setLastDeleted({ set: removed, date: today });
+    setTimeout(() => setLastDeleted((cur) => (cur?.set.id === removed.id ? null : cur)), 6000);
+  };
+
+  const undoDelete = () => {
+    if (!lastDeleted) return;
+    setData((d) => ({
+      ...d,
+      workouts: d.workouts.map((w) => (w.date === lastDeleted.date ? { ...w, sets: [...w.sets, lastDeleted.set] } : w)),
+    }));
+    setLastDeleted(null);
+  };
+
+  /* §8.1 — edit an already-logged set (weight/reps/timing/note/flags)
+     without deleting and re-entering it */
+  const updateSet = (setId, patch) =>
+    updateSession((w) => ({ ...w, sets: w.sets.map((s) => (s.id === setId ? { ...s, ...patch } : s)) }));
+
+  /* §6.1 step 4 — one tap logs the whole warmup ramp, each set
+     pre-tagged so it never pollutes analysis */
+  const logWarmupRamp = () => {
+    if (!openEx) return;
+    const ramp = generateWarmupRamp(weight, unit).map((step, i) => ({
+      id: uid(), exerciseId: openEx.id, unit, scheme: "straight",
+      weight: step.weight, reps: step.reps,
+      note: "", rir: null, warmup: true, pain: false, ts: Date.now() + i,
+    }));
+    if (!session) {
+      setData((d) => ({
+        ...d,
+        workouts: [...d.workouts, { id: uid(), date: today, planId: null, planName: "Freestyle", queue: [], sets: ramp }],
+      }));
+    } else {
+      updateSession((w) => ({ ...w, sets: [...w.sets, ...ramp] }));
+    }
+  };
 
   const moveQueueItem = (idx, dir) =>
     updateSession((w) => {
@@ -835,7 +928,12 @@ export default function SwolleyMammoths() {
                 onChange={(e) => setHeartRate(e.target.value)} placeholder="Avg heart rate — optional" />
             )}
 
-            {cfg.strip && scheme === "straight" && <BarStrip weight={weight} unit={unit} />}
+            {cfg.strip && scheme === "straight" && (
+              <>
+                <BarStrip weight={weight} unit={unit} />
+                {weight > spec.bar && <button className="ghost warmupramp" onClick={logWarmupRamp}>Log warmup ramp</button>}
+              </>
+            )}
 
             {showsStrength && (
               <div className="rir">
@@ -890,7 +988,7 @@ export default function SwolleyMammoths() {
                   (s.scheme || "straight") === (lastSession.best.scheme || "straight") &&
                   setScore(s, openEx, unit, bodyweight) > setScore(lastSession.best, openEx, unit, bodyweight);
                 return (
-                  <div className={`row ${s.warmup ? "row--warmup" : ""}`} key={s.id}>
+                  <button className={`row ${s.warmup ? "row--warmup" : ""}`} key={s.id} onClick={() => setEditingSetId(s.id)}>
                     <span className="row__n">{String(i + 1).padStart(2, "0")}</span>
                     <span className="row__main">{setLabel(s, openEx, unit)}</span>
                     {s.warmup && <span className="row__tag">W</span>}
@@ -899,12 +997,19 @@ export default function SwolleyMammoths() {
                     <span className="row__e1">
                       {mode === "timed" ? mmss(s.seconds) : round1(setScore(s, openEx, unit, bodyweight))}
                     </span>
-                    <button className="row__x" onClick={() => deleteSet(s.id)} aria-label="delete set">×</button>
+                    <span className="row__x" onClick={(e) => { e.stopPropagation(); deleteSet(s.id); }} aria-label="delete set">×</span>
                     {s.note && <div className="row__note">{s.note}</div>}
-                  </div>
+                  </button>
                 );
               })}
           </section>
+
+          {lastDeleted && (
+            <div className="undotoast">
+              <span>Set deleted.</span>
+              <button onClick={undoDelete}>Undo</button>
+            </div>
+          )}
 
           {oneRM && mode !== "timed" && mode !== "cardio" && (
             <section className="rm">
@@ -968,6 +1073,15 @@ export default function SwolleyMammoths() {
                 {bwStrength.verdict === "flat" && "Roughly flat over this window."}
               </div>
             </section>
+          )}
+
+          {editingSetId && todaySets.find((s) => s.id === editingSetId) && (
+            <EditSetSheet
+              set={todaySets.find((s) => s.id === editingSetId)}
+              ex={openEx} unit={unit} spec={spec}
+              onSave={(id, patch) => { updateSet(id, patch); setEditingSetId(null); }}
+              onClose={() => setEditingSetId(null)}
+            />
           )}
         </main>
       </div>
@@ -1435,7 +1549,10 @@ const CSS = `
 
 .sets{margin-top:26px;}
 .sets__hd{display:flex;justify-content:space-between;font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);padding-bottom:8px;border-bottom:1px solid var(--line);}
-.row{display:flex;align-items:baseline;gap:12px;padding:13px 2px;border-bottom:1px solid var(--line);flex-wrap:wrap;}
+.row{width:100%;text-align:left;display:flex;align-items:baseline;gap:12px;padding:13px 2px;border-bottom:1px solid var(--line);flex-wrap:wrap;}
+.warmupramp{margin-top:8px;}
+.undotoast{display:flex;justify-content:space-between;align-items:center;margin-top:10px;padding:10px 14px;background:#2C313A;border-radius:6px;font-size:13px;}
+.undotoast button{font-family:var(--mono);font-size:11px;color:var(--gold);font-weight:600;}
 .row--warmup{opacity:.6;}
 .row__n{font-family:var(--mono);font-size:11px;color:var(--dim);}
 .row__main{font-family:var(--mono);font-size:17px;}
@@ -1443,7 +1560,7 @@ const CSS = `
 .row__tag--pain{background:var(--red);color:#fff;}
 .row__beat{color:var(--gold);font-size:11px;}
 .row__e1{margin-left:auto;font-family:var(--mono);font-size:12px;color:var(--gold);}
-.row__x{color:var(--dim);font-size:20px;padding:0 4px;line-height:1;}
+.row__x{color:var(--dim);font-size:20px;padding:0 4px;line-height:1;cursor:pointer;}
 .row__note{flex-basis:100%;font-size:12px;color:var(--dim);padding-left:23px;line-height:1.4;margin-top:2px;}
 .empty{font-family:var(--mono);font-size:12px;color:var(--dim);padding:20px 2px;line-height:1.6;}
 
