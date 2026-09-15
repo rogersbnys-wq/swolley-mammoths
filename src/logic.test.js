@@ -6,7 +6,7 @@ import {
   goalCurrentValue, canArmTarget, pace, bodyweightAdjustedStrength,
   coachInsights, planCoverage, suggestPlanForCapability, goalVerdict,
   evaluatePlanOnSave, volumeByCapability, progressionPct, trajectoryDivergence,
-  balancedScorecard, rankedChanges, describeCapabilities, patternSide,
+  balancedScorecard, rankedChanges, describeCapabilities, patternSide, planAllItems,
   mostTrainedExercise, topVerdict, CAPABILITY_COLORS,
   needsBackupReminder, importData, generateWarmupRamp,
   GOAL_TEMPLATES, SEED_EXERCISES, SEED_PLANS, CAPABILITIES,
@@ -550,6 +550,23 @@ describe("patternSide / describeCapabilities", () => {
   });
 });
 
+describe("planAllItems", () => {
+  it("returns a single-day plan's items directly", () => {
+    const plan = { id: "p1", items: [{ exerciseId: "e1" }, { exerciseId: "e2" }] };
+    expect(planAllItems(plan)).toEqual(plan.items);
+  });
+  it("flattens every day's items for a multi-day program", () => {
+    const plan = { id: "p1", days: [
+      { id: "d1", name: "Day 1", items: [{ exerciseId: "e1" }] },
+      { id: "d2", name: "Day 2", items: [{ exerciseId: "e2" }, { exerciseId: "e3" }] },
+    ] };
+    expect(planAllItems(plan)).toEqual([{ exerciseId: "e1" }, { exerciseId: "e2" }, { exerciseId: "e3" }]);
+  });
+  it("returns an empty array for a plan with neither", () => {
+    expect(planAllItems({ id: "p1" })).toEqual([]);
+  });
+});
+
 describe("planCoverage", () => {
   const exercises = [
     barbell("bench", "Bench", ["horizontal_press"]),
@@ -571,6 +588,14 @@ describe("planCoverage", () => {
     const cov = planCoverage(plans, { capabilities: ["hinge", "carry"] }, exercises);
     expect(cov.covered).toEqual([]);
     expect(cov.ratio).toBe(0);
+  });
+  it("counts a capability trained on any day of a multi-day program", () => {
+    const program = { id: "prog", days: [
+      { id: "d1", name: "Day 1", items: [{ exerciseId: "bench" }] },
+      { id: "d2", name: "Day 2", items: [{ exerciseId: "dl" }] },
+    ] };
+    const cov = planCoverage([program], { capabilities: ["hinge"] }, exercises);
+    expect(cov.ratio).toBe(1);
   });
 });
 

@@ -694,6 +694,16 @@ export function coachInsights(data, unit, now = new Date()) {
    three inputs: plans, logs, goals.
    ============================================================ */
 
+/* §8.3 — a plan can be a single day (`items`) or a multi-day program
+   (`days: [{id, name, items}]`); this is every exercise the plan
+   trains across all of its days, which is what "does this plan serve
+   this goal" should always mean — a 4-day program that hits a
+   capability on day 3 still covers it. */
+export function planAllItems(plan) {
+  if (plan.days && plan.days.length) return plan.days.flatMap((d) => d.items);
+  return plan.items || [];
+}
+
 /* §8.5a — does the user's *intended* training even cover a goal's
    required capabilities? Reads the Plans tab, not just the log. */
 export function planCoverage(plans, goal, exercises) {
@@ -701,7 +711,7 @@ export function planCoverage(plans, goal, exercises) {
     return { applicable: false, covered: [], missing: [], ratio: null };
   }
   const served = new Set();
-  (plans || []).forEach((p) => p.items.forEach((it) => {
+  (plans || []).forEach((p) => planAllItems(p).forEach((it) => {
     const ex = exercises.find((e) => e.id === it.exerciseId);
     (ex?.capabilities || []).forEach((c) => served.add(c));
   }));
@@ -717,13 +727,14 @@ export function suggestPlanForCapability(cap, plans, exercises) {
   if (!plans || !plans.length) return null;
   const side = patternSide(cap);
   const scored = plans.map((p) => {
+    const items = planAllItems(p);
     const caps = new Set();
-    p.items.forEach((it) => {
+    items.forEach((it) => {
       const ex = exercises.find((e) => e.id === it.exerciseId);
       (ex?.capabilities || []).forEach((c) => caps.add(c));
     });
     const sameSide = [...caps].some((c) => patternSide(c) === side);
-    return { plan: p, sameSide, size: p.items.length };
+    return { plan: p, sameSide, size: items.length };
   });
   scored.sort((a, b) => (b.sameSide - a.sameSide) || (a.size - b.size));
   return scored[0]?.plan || null;

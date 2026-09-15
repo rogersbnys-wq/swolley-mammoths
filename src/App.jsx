@@ -7,7 +7,7 @@ import {
   canArmTarget, pace, bodyweightAdjustedStrength, coachInsights,
   goalVerdict, evaluatePlanOnSave, balancedScorecard, rankedChanges,
   describeCapabilities, mostTrainedExercise, topVerdict,
-  needsBackupReminder, importData, generateWarmupRamp,
+  needsBackupReminder, importData, generateWarmupRamp, planAllItems,
 } from "./logic.js";
 
 /* a small colored dot for an exercise's primary capability — the
@@ -479,6 +479,8 @@ export default function SwolleyMammoths() {
   const [editingSetId, setEditingSetId] = useState(null);
   const [lastDeleted, setLastDeleted] = useState(null);
   const [rest, setRest] = useState(null); // { endAt, total } | null
+  const [dayPicker, setDayPicker] = useState(null); // { planId, action: "start" | "load" } | null
+  const [activeDay, setActiveDay] = useState(0); // which day of a multi-day program is being edited
 
   useEffect(() => { setData(loadData() || seed()); }, []);
   useEffect(() => { if (data) saveData(data); }, [data]);
@@ -565,30 +567,53 @@ export default function SwolleyMammoths() {
   const updateSession = (fn) =>
     setData((d) => ({ ...d, workouts: d.workouts.map((w) => (w.date === today ? fn(w) : w)) }));
 
-  const startSession = (planId) => {
+  /* §8.3 — a multi-day program's `dayId` picks which day's items load;
+     omitted for a plain single-day plan (or a program's only day) */
+  const startSession = (planId, dayId) => {
     const plan = planId ? data.plans.find((p) => p.id === planId) : null;
+    const day = dayId && plan?.days?.find((d) => d.id === dayId);
+    const items = day ? day.items : plan?.items || [];
     setData((d) => ({
       ...d,
       workouts: [...d.workouts, {
         id: uid(), date: today, planId: planId || null,
-        planName: plan ? plan.name : "Freestyle",
-        queue: plan ? plan.items.map((i) => ({ ...i, id: uid() })) : [],
+        planName: plan ? (day ? `${plan.name} — ${day.name}` : plan.name) : "Freestyle",
+        queue: plan ? items.map((i) => ({ ...i, id: uid() })) : [],
         sets: [],
       }],
     }));
   };
 
-  /* append a plan's exercises to whatever is already in today's queue */
-  const loadPlanIntoSession = (planId) => {
+  /* append a plan's (or one day's) exercises to whatever is already in today's queue */
+  const loadPlanIntoSession = (planId, dayId) => {
     const plan = data.plans.find((p) => p.id === planId);
     if (!plan) return;
+    const day = dayId && plan.days?.find((d) => d.id === dayId);
+    const items = day ? day.items : plan.items || [];
+    const label = day ? `${plan.name} — ${day.name}` : plan.name;
     setPlanSheet(false);
-    if (!session) { startSession(planId); return; }
+    if (!session) { startSession(planId, dayId); return; }
     updateSession((w) => ({
       ...w,
-      planName: w.queue.length === 0 && w.planName === "Freestyle" ? plan.name : `${w.planName} + ${plan.name}`,
-      queue: [...w.queue, ...plan.items.map((i) => ({ ...i, id: uid() }))],
+      planName: w.queue.length === 0 && w.planName === "Freestyle" ? label : `${w.planName} + ${label}`,
+      queue: [...w.queue, ...items.map((i) => ({ ...i, id: uid() }))],
     }));
+  };
+
+  /* a plan with 2+ days needs a day choice first; a plain plan (or a
+     program with just one day) starts/loads immediately as before */
+  const pickOrStart = (plan, action) => {
+    if (plan.days && plan.days.length > 1) { setDayPicker({ planId: plan.id, action }); return; }
+    const dayId = plan.days?.[0]?.id;
+    if (action === "start") startSession(plan.id, dayId);
+    else { loadPlanIntoSession(plan.id, dayId); setTab("today"); }
+  };
+
+  const planSummary = (p) => {
+    if (p.days && p.days.length > 1) return `${p.days.length}-day program`;
+    const items = planAllItems(p);
+    const names = items.map((i) => exById(i.exerciseId)?.name).filter(Boolean).slice(0, 3).join(" · ");
+    return items.length > 3 ? `${names} +${items.length - 3}` : names;
   };
 
   const openExercise = (exId) => {
@@ -754,7 +779,7 @@ export default function SwolleyMammoths() {
         queue: [...w.queue, { id: uid(), exerciseId: exId, note: "", sets: 3, reps: 8, rest: 90 }],
       }));
     } else if (picker.mode === "planAdd") {
-      setEditingPlan((p) => ({ ...p, items: [...p.items, { exerciseId: exId, note: "", sets: 3, reps: 8, rest: 90 }] }));
+      setPlanItems((items) => [...items, { exerciseId: exId, note: "", sets: 3, reps: 8, rest: 90 }]);
     } else if (picker.mode === "freestyle") {
       openExercise(exId);
     }
@@ -781,20 +806,54 @@ export default function SwolleyMammoths() {
     setPlanCritique(msgs.length ? msgs : null);
   };
 
-  const patchPlanItem = (i, patch) =>
+  /* every plan-item mutation goes through this so it works identically
+     whether editingPlan is a plain single-day plan (`items`) or a
+     multi-day program (`days[activeDay].items`) */
+  const setPlanItems = (updater) =>
     setEditingPlan((p) => {
-      const items = [...p.items];
-      items[i] = { ...items[i], ...patch };
-      return { ...p, items };
+      if (p.days) {
+        const days = [...p.days];
+        days[activeDay] = { ...days[activeDay], items: updater(days[activeDay].items) };
+        return { ...p, days };
+      }
+      return { ...p, items: updater(p.items) };
     });
 
+  const planItemsOf = (p) => (p.days ? p.days[activeDay]?.items || [] : p.items || []);
+
+  const patchPlanItem = (i, patch) =>
+    setPlanItems((items) => items.map((it, j) => (j === i ? { ...it, ...patch } : it)));
+
   const movePlanItem = (i, dir) =>
-    setEditingPlan((p) => {
-      const items = [...p.items];
+    setPlanItems((items) => {
+      const next = [...items];
       const j = i + dir;
-      if (j < 0 || j >= items.length) return p;
-      [items[i], items[j]] = [items[j], items[i]];
-      return { ...p, items };
+      if (j < 0 || j >= next.length) return items;
+      [next[i], next[j]] = [next[j], next[i]];
+      return next;
+    });
+
+  const addPlanDay = () =>
+    setEditingPlan((p) => {
+      const days = p.days ? [...p.days] : [{ id: uid(), name: "Day 1", items: p.items || [] }];
+      days.push({ id: uid(), name: `Day ${days.length + 1}`, items: [] });
+      setActiveDay(days.length - 1);
+      return { ...p, days };
+    });
+
+  const removePlanDay = (idx) =>
+    setEditingPlan((p) => {
+      if (!p.days || p.days.length <= 1) return p;
+      const days = p.days.filter((_, j) => j !== idx);
+      setActiveDay((d) => Math.min(d, days.length - 1));
+      return { ...p, days };
+    });
+
+  const renamePlanDay = (idx, name) =>
+    setEditingPlan((p) => {
+      const days = [...p.days];
+      days[idx] = { ...days[idx], name };
+      return { ...p, days };
     });
 
   const logBodyweight = (value) => {
@@ -1150,7 +1209,27 @@ export default function SwolleyMammoths() {
           <input className="planname" placeholder="Plan name" value={editingPlan.name}
             onChange={(e) => setEditingPlan({ ...editingPlan, name: e.target.value })} />
 
-          {editingPlan.items.map((it, i) => {
+          {editingPlan.days && (
+            <div className="daytabs">
+              {editingPlan.days.map((d, i) => (
+                <button key={d.id} className={`daytab ${i === activeDay ? "on" : ""}`} onClick={() => setActiveDay(i)}>
+                  {d.name}
+                </button>
+              ))}
+              <button className="daytab daytab--add" onClick={addPlanDay}>+</button>
+            </div>
+          )}
+          {editingPlan.days && (
+            <div className="dayname">
+              <input className="dayname__input" value={editingPlan.days[activeDay]?.name || ""}
+                onChange={(e) => renamePlanDay(activeDay, e.target.value)} placeholder="Day name" />
+              {editingPlan.days.length > 1 && (
+                <button className="dayname__x" onClick={() => removePlanDay(activeDay)} aria-label="remove day">Remove day</button>
+              )}
+            </div>
+          )}
+
+          {planItemsOf(editingPlan).map((it, i) => {
             const ex = exById(it.exerciseId);
             return (
               <div className="pitem" key={i}>
@@ -1159,7 +1238,7 @@ export default function SwolleyMammoths() {
                   <div className="pitem__ctl">
                     <button onClick={() => movePlanItem(i, -1)} aria-label="move up">↑</button>
                     <button onClick={() => movePlanItem(i, 1)} aria-label="move down">↓</button>
-                    <button onClick={() => setEditingPlan((p) => ({ ...p, items: p.items.filter((_, j) => j !== i) }))}
+                    <button onClick={() => setPlanItems((items) => items.filter((_, j) => j !== i))}
                       aria-label="remove">×</button>
                   </div>
                 </div>
@@ -1181,6 +1260,7 @@ export default function SwolleyMammoths() {
           })}
 
           <button className="ghost" onClick={() => setPicker({ mode: "planAdd" })}>+ Add exercise</button>
+          {!editingPlan.days && <button className="ghost" onClick={addPlanDay}>+ Add a day (make this a program)</button>}
         </main>
         {pickerEl}
       </div>
@@ -1220,12 +1300,9 @@ export default function SwolleyMammoths() {
                 <div className="prompt">Start today's session</div>
                 <div className="cardgrid">
                   {data.plans.map((p) => (
-                    <button className="planpick" key={p.id} onClick={() => startSession(p.id)}>
+                    <button className="planpick" key={p.id} onClick={() => pickOrStart(p, "start")}>
                       <span className="planpick__n">{p.name}</span>
-                      <span className="planpick__m">
-                        {p.items.map((i) => exById(i.exerciseId)?.name).filter(Boolean).slice(0, 3).join(" · ")}
-                        {p.items.length > 3 ? ` +${p.items.length - 3}` : ""}
-                      </span>
+                      <span className="planpick__m">{planSummary(p)}</span>
                     </button>
                   ))}
                 </div>
@@ -1286,20 +1363,17 @@ export default function SwolleyMammoths() {
             <div className="cardgrid">
               {data.plans.map((p) => (
                 <div className="prow" key={p.id}>
-                  <button className="prow__main" onClick={() => { loadPlanIntoSession(p.id); setTab("today"); }}>
+                  <button className="prow__main" onClick={() => pickOrStart(p, "load")}>
                     <div className="prow__n">{p.name}</div>
-                    <div className="prow__m">
-                      {p.items.map((i) => exById(i.exerciseId)?.name).filter(Boolean).slice(0, 3).join(" · ")}
-                      {p.items.length > 3 ? ` +${p.items.length - 3}` : ""}
-                    </div>
+                    <div className="prow__m">{planSummary(p)}</div>
                   </button>
-                  <button className="prow__edit" onClick={() => setEditingPlan(JSON.parse(JSON.stringify(p)))}>edit</button>
+                  <button className="prow__edit" onClick={() => { setEditingPlan(JSON.parse(JSON.stringify(p))); setActiveDay(0); }}>edit</button>
                   <button className="prow__x" aria-label="delete plan"
                     onClick={() => setData((d) => ({ ...d, plans: d.plans.filter((x) => x.id !== p.id) }))}>×</button>
                 </div>
               ))}
             </div>
-            <button className="ghost" onClick={() => setEditingPlan({ id: uid(), name: "", items: [] })}>+ New plan</button>
+            <button className="ghost" onClick={() => { setEditingPlan({ id: uid(), name: "", items: [] }); setActiveDay(0); }}>+ New plan</button>
           </>
         )}
 
@@ -1464,9 +1538,9 @@ export default function SwolleyMammoths() {
             <div className="sheet__hint">Its exercises get added to today's list.</div>
             <div className="sheet__list">
               {data.plans.map((p) => (
-                <button key={p.id} className="sheet__i" onClick={() => loadPlanIntoSession(p.id)}>
+                <button key={p.id} className="sheet__i" onClick={() => pickOrStart(p, "load")}>
                   <span>{p.name}</span>
-                  <span className="sheet__g">{p.items.length} exercises</span>
+                  <span className="sheet__g">{p.days?.length > 1 ? `${p.days.length} days` : `${planAllItems(p).length} exercises`}</span>
                 </button>
               ))}
               {data.plans.length === 0 && <div className="empty">No plans yet. Build one on the Plans tab.</div>}
@@ -1474,6 +1548,30 @@ export default function SwolleyMammoths() {
           </div>
         </div>
       )}
+
+      {dayPicker && (() => {
+        const plan = data.plans.find((p) => p.id === dayPicker.planId);
+        if (!plan?.days) return null;
+        return (
+          <div className="sheet" onClick={() => setDayPicker(null)}>
+            <div className="sheet__in" onClick={(e) => e.stopPropagation()}>
+              <div className="sheet__hd">Which day — {plan.name}</div>
+              <div className="sheet__list">
+                {plan.days.map((d) => (
+                  <button key={d.id} className="sheet__i" onClick={() => {
+                    if (dayPicker.action === "start") startSession(plan.id, d.id);
+                    else { loadPlanIntoSession(plan.id, d.id); setTab("today"); }
+                    setDayPicker(null);
+                  }}>
+                    <span>{d.name}</span>
+                    <span className="sheet__g">{d.items.length} exercises</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -1581,6 +1679,14 @@ const CSS = `
 .notefield,.planname,.pitem__note,.sheet__search{width:100%;background:var(--raised);border:1px solid var(--line);border-radius:8px;padding:12px;color:var(--chalk);font-size:14px;margin-top:12px;}
 .notefield::placeholder,.planname::placeholder,.pitem__note::placeholder,.sheet__search::placeholder{color:var(--dim);}
 .planname{font-size:17px;font-weight:600;margin-top:0;}
+
+.daytabs{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px;}
+.daytab{padding:8px 13px;border:1px solid var(--line);border-radius:16px;font-size:12.5px;color:var(--dim);}
+.daytab.on{background:var(--gold);color:#1A1D22;border-color:var(--gold);font-weight:600;}
+.daytab--add{font-weight:700;}
+.dayname{display:flex;align-items:center;gap:10px;margin-top:12px;}
+.dayname__input{flex:1;background:var(--raised);border:1px solid var(--line);border-radius:6px;padding:9px 11px;color:var(--chalk);font-size:14px;}
+.dayname__x{font-family:var(--mono);font-size:10px;color:var(--red);white-space:nowrap;flex:0 0 auto;}
 
 .proj{font-family:var(--mono);font-size:12px;color:var(--dim);margin-top:12px;display:flex;gap:12px;align-items:baseline;}
 .proj b{color:var(--chalk);font-size:15px;font-weight:500;}
