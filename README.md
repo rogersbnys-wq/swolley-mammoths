@@ -161,17 +161,22 @@ main suite. `src/App.test.jsx` adds a handful of render-level smoke tests on top
 - **Phase 1–3.5** ✅ — exercise library, five exercise modes, plans with mid-session swap,
   multi-set weighted 1RM, goals with capability-based pace tracking, rule-based coaching,
   bodyweight-adjusted strength, warmup/pain tagging excluded from analysis.
-- **Phase 4** ✅ (this change) — **the Coach evaluation engine**: `planCoverage` (does your
-  training even cover a goal's required movement patterns), a per-goal green/amber/red
-  verdict combining plan coverage with pace, a critique shown the moment a plan is saved,
-  and a balanced scorecard (push:pull, quad:hinge, horizontal:vertical volume leans plus
-  trajectory divergence) — framed as leans and trends with an evidence qualifier, never an
-  asserted target ratio. See the PRD's §8.5 for the full spec this implements.
-  **Deliberately deferred to later phases**, per the PRD's own phasing: multi-day programs,
-  the movement-equivalence model with cross-exercise progression continuity, adherence
-  (log ↔ plan), a rest timer and wake lock, and the onboarding wizard — goal creation
-  currently lives on the Coach tab rather than first-run.
-- **Phase 5** — movement-equivalence model, cross-exercise progression continuity,
-  adherence, one-tap plan fixes, trajectory divergence depth
-- **Phase 6** — IndexedDB migration, backend, conversational coach, myth buster
-- **Phase 7** — progress photos, side-by-side comparison
+- **Phase 4** ✅ — **the Coach evaluation engine**: `planCoverage`, per-goal green/amber/red
+  verdicts, plan-save critique, and a balanced scorecard (volume leans + trajectory
+  divergence) framed as leans and trends with an evidence qualifier, never an asserted
+  target ratio. See the PRD's §8.5.
+- **Phase 5** ✅ — warmup ramp auto-generation, set edit + 6-second undo, a per-exercise
+  rest timer, multi-day programs, the movement-equivalence model with cross-exercise
+  progression continuity, adherence (log ↔ plan), the remaining scorecard layers
+  (strength-ratio + domain balance), and a session-completion summary screen. Also closed
+  §8.10's data-durability gap (JSON import + a backup-due nag) — the PRD's own
+  top-flagged risk, since Safari can evict `localStorage` under disk pressure on iPhone.
+- **Next up — accounts + cloud sync (decided, not yet started).** Real sign-in with
+  data following you across devices, replacing the current local-first/export-import
+  model. This is the single biggest architectural change so far — it needs a backend
+  (a serverless function + managed DB) — and it's also the foundation the conversational
+  coach (below) will need regardless. Everything else on this list can wait behind it if
+  it needs to.
+- **Later** — IndexedDB migration, conversational coach, myth buster, progress photos,
+  side-by-side comparison, nutrition/supplements. Onboarding wizard remains deliberately
+  skipped — goal creation lives on the Coach tab instead of first-run.
