@@ -1451,6 +1451,35 @@ export default function SwolleyMammoths() {
                   </div>
                 ))}
                 {scorecard.trajectories.map((t, i) => <div className="scorecard__note" key={i}>{t.text}</div>)}
+
+                <div className="scorecard__sub">Strength ratio (snapshot, not a target)</div>
+                {scorecard.strengthRatios.map((r) => (
+                  <div className="scorecard__row" key={r.key}>
+                    <div className="scorecard__head">
+                      <span>
+                        <CapDot capability={SCORECARD_LABEL_CAP[r.labelA]} />{r.labelA}
+                        <span className="scorecard__vs"> vs </span>
+                        <CapDot capability={SCORECARD_LABEL_CAP[r.labelB]} />{r.labelB}
+                      </span>
+                      <span className={`scorecard__status scorecard__status--${r.status === "lean" ? "lean" : r.status}`}>{r.status}</span>
+                    </div>
+                    {r.status !== "insufficient" && (
+                      <>
+                        <div className="scorecard__nums">{r.exA} {r.a}{unit} vs {r.exB} {r.b}{unit} · {r.ratio}:1</div>
+                        {r.status === "lean" && <div className="scorecard__note">{r.note}</div>}
+                      </>
+                    )}
+                  </div>
+                ))}
+
+                <div className="scorecard__sub">Domain balance</div>
+                <div className="domainrow">
+                  {scorecard.domains.map((d) => (
+                    <span key={d.domain} className={`domainchip domainchip--${d.status}`}>
+                      {d.domain}{d.status === "tracked" ? ` · ${d.sets}` : ""}
+                    </span>
+                  ))}
+                </div>
               </details>
             )}
 
@@ -1913,6 +1942,10 @@ const CSS = `
 .scorecard__status--lean{color:var(--gold);}
 .scorecard__nums{font-family:var(--mono);font-size:11px;color:var(--dim);margin-top:3px;}
 .scorecard__note{font-size:12px;color:var(--dim);line-height:1.5;margin-top:5px;}
+.scorecard__sub{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin-top:18px;padding-top:14px;border-top:1px solid var(--line);}
+.domainrow{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;}
+.domainchip{font-family:var(--mono);font-size:10.5px;padding:5px 10px;border-radius:12px;border:1px solid var(--line);text-transform:capitalize;color:var(--dim);}
+.domainchip--tracked{color:var(--gold);border-color:var(--gold);}
 .insight{font-size:12.5px;line-height:1.5;padding:8px 0;border-bottom:1px solid var(--line);}
 .insight--alert{color:var(--red);}
 .insight--good{color:var(--gold);}

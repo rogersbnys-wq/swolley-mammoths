@@ -1031,6 +1031,55 @@ export function trajectoryDivergence(workouts, exercises, exIdA, exIdB, unit, bo
 /* §8.5c — the balanced scorecard: volume leans + trajectory divergence,
    every ratio-based flag carrying an evidence qualifier rather than an
    asserted target. */
+/* §8.5c layer 2 — relative strength between complementary lifts, a
+   snapshot ratio (not a trend — see trajectoryDivergence for that).
+   Picks each side's most-trained exercise automatically. Framed as a
+   direction, never a target: the recon found no defensible single
+   ratio (sources range 1:1 to 2:1, one prominent coach calls the
+   framing itself wrong, elite athletes carry 15-22% more push than
+   pull naturally). */
+function strengthRatioLean(data, unit, capsA, capsB, labelA, labelB) {
+  const bw = currentBodyweight(data, unit);
+  const idA = capsA.map((c) => mostTrainedExercise(data.workouts, data.exercises, c)).find(Boolean);
+  const idB = capsB.map((c) => mostTrainedExercise(data.workouts, data.exercises, c)).find(Boolean);
+  if (!idA || !idB) return { labelA, labelB, status: "insufficient" };
+  const exA = data.exercises.find((e) => e.id === idA);
+  const exB = data.exercises.find((e) => e.id === idB);
+  const bestA = bestScore(data.workouts, idA, exA, unit, bw);
+  const bestB = bestScore(data.workouts, idB, exB, unit, bw);
+  if (bestA <= 0 || bestB <= 0) return { labelA, labelB, status: "insufficient" };
+  const ratio = bestB > 0 ? bestA / bestB : Infinity;
+  const lean = ratio >= LEAN_RATIO ? labelA : ratio <= 1 / LEAN_RATIO ? labelB : null;
+  return {
+    labelA, labelB, exA: exA.name, exB: exB.name,
+    a: round1(bestA), b: round1(bestB), ratio: isFinite(ratio) ? round1(ratio) : null,
+    lean, status: lean ? "lean" : "balanced",
+  };
+}
+
+/* §8.5c layer 3 — strength/power/speed/endurance/mobility. Sparse by
+   design in v1: this is a frame for what's tracked at all, not a
+   graded score, since most users will have real gaps (no "speed"
+   capability exists yet at all, which is honest, not a bug). */
+export const DOMAIN_OF_CAPABILITY = {
+  squat: "strength", hinge: "strength", horizontal_press: "strength", vertical_press: "strength",
+  horizontal_pull: "strength", vertical_pull: "strength", carry: "strength",
+  jump: "power",
+  row_erg: "endurance", ski_erg: "endurance", run: "endurance",
+  core: "mobility",
+};
+const ALL_DOMAINS = ["strength", "power", "speed", "endurance", "mobility"];
+
+export function domainBalance(data, unit, { sinceDays = 28, now = Date.now() } = {}) {
+  const byCap = volumeByCapability(data.workouts, data.exercises, sinceDays, now);
+  const sets = {};
+  Object.entries(byCap).forEach(([cap, n]) => {
+    const domain = DOMAIN_OF_CAPABILITY[cap];
+    if (domain) sets[domain] = (sets[domain] || 0) + n;
+  });
+  return ALL_DOMAINS.map((domain) => ({ domain, sets: sets[domain] || 0, status: sets[domain] ? "tracked" : "none" }));
+}
+
 export function balancedScorecard(data, unit, { sinceDays = 28, now = Date.now(), pairs = [] } = {}) {
   const byCapNow = volumeByCapability(data.workouts, data.exercises, sinceDays, now);
   const byCapPrior = volumeByCapability(
@@ -1048,13 +1097,23 @@ export function balancedScorecard(data, unit, { sinceDays = 28, now = Date.now()
       note: "Flagged as a direction worth balancing, not a prescribed ratio." },
   ];
 
+  const strengthRatios = [
+    { ...strengthRatioLean(data, unit, ["horizontal_press", "vertical_press"], ["horizontal_pull", "vertical_pull"], "pressing", "pulling"),
+      key: "push_pull_strength",
+      note: "A snapshot of current strength, not a target — the literature has no single defensible ratio (1:1 to 2:1 depending on source). Direction and trend matter more than this number." },
+    { ...strengthRatioLean(data, unit, ["squat"], ["hinge"], "quad-dominant", "hip-hinge"), key: "quad_hinge_strength",
+      note: "A snapshot of current strength, not a target." },
+  ];
+
+  const domains = domainBalance(data, unit, { sinceDays, now });
+
   const trajectories = pairs
     .map(([a, b]) => trajectoryDivergence(data.workouts, data.exercises, a, b, unit, currentBodyweight(data, unit), sinceDays * 2, now))
     .filter((t) => t.status === "diverging");
 
   const painInsights = coachInsights(data, unit, new Date(now)).filter((i) => i.type === "pain");
 
-  return { volume, trajectories, painFlags: painInsights, sinceDays };
+  return { volume, strengthRatios, domains, trajectories, painFlags: painInsights, sinceDays };
 }
 
 /* which exercise carrying a capability has the most logged history —

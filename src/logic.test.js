@@ -7,7 +7,7 @@ import {
   coachInsights, planCoverage, suggestPlanForCapability, goalVerdict,
   evaluatePlanOnSave, volumeByCapability, progressionPct, trajectoryDivergence,
   balancedScorecard, rankedChanges, describeCapabilities, patternSide, planAllItems,
-  personalRatio, equivalentLoad, substitutedPoints, adherence,
+  personalRatio, equivalentLoad, substitutedPoints, adherence, domainBalance,
   mostTrainedExercise, topVerdict, CAPABILITY_COLORS,
   needsBackupReminder, importData, generateWarmupRamp,
   GOAL_TEMPLATES, SEED_EXERCISES, SEED_PLANS, CAPABILITIES,
@@ -922,6 +922,54 @@ describe("balancedScorecard", () => {
     const data = { exercises, workouts: [{ date: todayKey(new Date(now - 5 * 86400000)), sets: setsOf(10, "bench") }] };
     const card = balancedScorecard(data, "lb", { sinceDays: 28, now });
     card.volume.forEach((v) => expect(v.note).not.toMatch(/should be \d+:\d+/));
+  });
+
+  it("includes a strength-ratio snapshot alongside volume", () => {
+    const now = Date.now();
+    const data = {
+      exercises,
+      workouts: [{ date: todayKey(new Date(now - 5 * 86400000)), sets: [
+        { exerciseId: "bench", weight: 200, reps: 5, unit: "lb" },
+        { exerciseId: "row", weight: 100, reps: 5, unit: "lb" },
+      ] }],
+    };
+    const card = balancedScorecard(data, "lb", { sinceDays: 28, now });
+    const pp = card.strengthRatios.find((r) => r.key === "push_pull_strength");
+    expect(pp.status).toBe("lean");
+    expect(pp.lean).toBe("pressing");
+    expect(pp.note).not.toMatch(/should be \d+:\d+/);
+  });
+
+  it("calls a strength ratio insufficient with no history on one side", () => {
+    const now = Date.now();
+    const data = { exercises, workouts: [{ date: todayKey(new Date(now - 5 * 86400000)), sets: setsOf(3, "bench") }] };
+    const card = balancedScorecard(data, "lb", { sinceDays: 28, now });
+    expect(card.strengthRatios.find((r) => r.key === "push_pull_strength").status).toBe("insufficient");
+  });
+
+  it("includes the domain balance frame", () => {
+    const now = Date.now();
+    const data = { exercises, workouts: [{ date: todayKey(new Date(now - 5 * 86400000)), sets: setsOf(3, "bench") }] };
+    const card = balancedScorecard(data, "lb", { sinceDays: 28, now });
+    expect(card.domains.find((d) => d.domain === "strength").status).toBe("tracked");
+    expect(card.domains.find((d) => d.domain === "speed").status).toBe("none");
+  });
+});
+
+describe("domainBalance", () => {
+  it("marks every domain with zero sets as untracked, not a failing score", () => {
+    const domains = domainBalance({ exercises: [], workouts: [] }, "lb");
+    expect(domains).toHaveLength(5);
+    domains.forEach((d) => expect(d.status).toBe("none"));
+  });
+
+  it("attributes volume to the right domain via the capability taxonomy", () => {
+    const exercises = [barbell("run", "Run", ["run"])];
+    const now = Date.now();
+    const data = { exercises, workouts: [{ date: todayKey(new Date(now - 2 * 86400000)), sets: [{ exerciseId: "run" }] }] };
+    const domains = domainBalance(data, "lb", { now });
+    expect(domains.find((d) => d.domain === "endurance").status).toBe("tracked");
+    expect(domains.find((d) => d.domain === "strength").status).toBe("none");
   });
 });
 
