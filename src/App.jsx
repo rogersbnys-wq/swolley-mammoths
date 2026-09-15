@@ -1364,7 +1364,13 @@ export default function SwolleyMammoths() {
             ) : (
               <>
                 <div className="shd">
-                  <span className="shd__n">{session.planName}</span>
+                  <span className="shd__n">
+                    {session.planName}
+                    {session.planName !== "Freestyle" && (
+                      <button className="shd__clear" onClick={() => updateSession((w) => ({ ...w, planName: "Freestyle" }))}
+                        aria-label="clear plan name" title="Clear plan name">×</button>
+                    )}
+                  </span>
                   <span className="shd__m">{session.sets.length} sets logged</span>
                 </div>
 
@@ -1390,8 +1396,10 @@ export default function SwolleyMammoths() {
                           mode: "swap", itemId: q.id, group: ex?.group,
                           fromExerciseId: q.exerciseId, originalExerciseId: q.originalExerciseId || q.exerciseId,
                         })}>swap</button>
-                        <button onClick={() => updateSession((w) => ({ ...w, queue: w.queue.filter((x) => x.id !== q.id) }))}
-                          aria-label="remove">×</button>
+                        <button onClick={() => updateSession((w) => {
+                          const queue = w.queue.filter((x) => x.id !== q.id);
+                          return { ...w, queue, planName: queue.length === 0 ? "Freestyle" : w.planName };
+                        })} aria-label="remove">×</button>
                       </div>
                     </div>
                   );
@@ -1740,6 +1748,7 @@ const CSS = `
 
 .shd{display:flex;justify-content:space-between;align-items:baseline;padding-bottom:10px;border-bottom:1px solid var(--line);}
 .shd__n{font-size:15px;font-weight:600;}
+.shd__clear{color:var(--dim);font-size:16px;line-height:1;padding:0 0 0 8px;vertical-align:middle;}
 .shd__m{font-family:var(--mono);font-size:10.5px;color:var(--dim);}
 
 .qitem{border-bottom:1px solid var(--line);padding:2px 0 8px;}
