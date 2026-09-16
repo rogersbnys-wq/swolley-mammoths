@@ -188,6 +188,15 @@ export function todayKey(d = new Date()) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
+/* the Monday of the calendar week containing `now`, as a date key —
+   the "this week" unit weeklyCapabilityStatus() below is built on. */
+function startOfWeekKey(now = new Date()) {
+  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const day = d.getDay(); // 0 = Sun .. 6 = Sat
+  d.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
+  return todayKey(d);
+}
+
 export function prettyDate(key) {
   const [y, m, d] = key.split("-").map(Number);
   const dt = new Date(y, m - 1, d);
@@ -904,6 +913,19 @@ export function goalVerdict(goal, data, unit, now = new Date()) {
   };
 }
 
+/* the multi-day program currently "in rotation" — the plan behind the
+   most recent workout in the window, if that plan actually has more
+   than one day (a single-day plan loaded once isn't a program with
+   its own cadence, it's just a plan). Shared by adherence() and
+   weeklyCapabilityStatus() so both agree on what counts as active. */
+function findActiveProgram(data, windowDays, now) {
+  const inWindow = data.workouts.filter((w) => ageDays(w.date, now) <= windowDays && w.sets.length > 0);
+  const programWorkouts = inWindow.filter((w) => w.planId).sort((a, b) => (a.date < b.date ? -1 : 1));
+  if (!programWorkouts.length) return null;
+  const plan = data.plans.find((p) => p.id === programWorkouts[programWorkouts.length - 1].planId);
+  return plan?.days?.length > 1 ? plan : null;
+}
+
 /* §8.5b — are you doing the plan you set? Intended sessions come from
    an active program's own cadence (days/week ≈ its day count) when
    one has actually been used in the window, falling back to the
@@ -914,12 +936,7 @@ export function adherence(data, { windowDays = 28, now = Date.now() } = {}) {
   const inWindow = data.workouts.filter((w) => ageDays(w.date, now) <= windowDays && w.sets.length > 0);
   const actualSessions = inWindow.length;
 
-  const programWorkouts = inWindow.filter((w) => w.planId).sort((a, b) => (a.date < b.date ? -1 : 1));
-  let activeProgram = null;
-  if (programWorkouts.length) {
-    const plan = data.plans.find((p) => p.id === programWorkouts[programWorkouts.length - 1].planId);
-    if (plan?.days?.length > 1) activeProgram = plan;
-  }
+  const activeProgram = findActiveProgram(data, windowDays, now);
 
   let intended = null, source = null;
   if (activeProgram) {
@@ -1089,6 +1106,33 @@ export const DOMAIN_OF_CAPABILITY = {
 };
 const ALL_DOMAINS = ["strength", "power", "speed", "endurance", "mobility"];
 
+/* §8.5 extension — "this week" fallback target. How often research
+   broadly supports training each domain, used ONLY when no program
+   exists to give a real target. Deliberately a frequency floor, not a
+   volume number: training a pattern ≥2x/week vs. once is one of the
+   more settled findings in the strength literature — the exact set
+   count within that is the part the push:pull note above already
+   flags as contested, so this stays out of that argument entirely.
+   General guidance, sourced and labeled as such — never presented as
+   a number the app decided this user personally needs. A future,
+   backend-backed version can replace this floor with an LLM-reasoned
+   recommendation grounded in the user's own goals and history (see
+   README "What's next"). */
+const DOMAIN_FREQUENCY_PER_WEEK = { strength: 2, endurance: 2, power: 1, mobility: 2, speed: 2 };
+const DOMAIN_FREQUENCY_NOTE = {
+  strength: "Training a pattern at least twice a week outperforms once a week for strength and size in most of the literature — the volume within that is far less settled, so this is a floor, not a plan.",
+  endurance: "Conditioning capacity tends to respond more to consistency than to any single session's length — a couple of touches a week is a common floor in programming.",
+  power: "Power and jump work is typically low-frequency, high-quality by design — once or twice a week is standard, to allow full recovery between sessions.",
+  mobility: "Same frequency logic as the major lifts, and low-cost to hit a couple of times a week.",
+  speed: "Same frequency logic as the major lifts — quality over frequency, but a couple of touches a week keeps it live.",
+};
+export const CAPABILITY_FREQUENCY_FLOOR = Object.fromEntries(
+  Object.keys(CAPABILITIES).map((cap) => {
+    const domain = DOMAIN_OF_CAPABILITY[cap] || "strength";
+    return [cap, { perWeek: DOMAIN_FREQUENCY_PER_WEEK[domain], note: DOMAIN_FREQUENCY_NOTE[domain] }];
+  })
+);
+
 export function domainBalance(data, unit, { sinceDays = 28, now = Date.now() } = {}) {
   const byCap = volumeByCapability(data.workouts, data.exercises, sinceDays, now);
   const sets = {};
@@ -1097,6 +1141,60 @@ export function domainBalance(data, unit, { sinceDays = 28, now = Date.now() } =
     if (domain) sets[domain] = (sets[domain] || 0) + n;
   });
   return ALL_DOMAINS.map((domain) => ({ domain, sets: sets[domain] || 0, status: sets[domain] ? "tracked" : "none" }));
+}
+
+/* §8.4/8.5 bridge — "am I doing enough of what my goals need, this
+   week." Distinct from both planCoverage (checks the plan's blueprint,
+   never whether it actually got trained) and the balanced scorecard
+   (compares complementary pairs against each other over a rolling 28
+   days): this looks at the current calendar week and asks, per
+   capability an active goal cares about, how many days you've
+   actually touched it so far.
+   The target half is only ever real when a multi-day program is
+   active — its own cadence says how many days a week each capability
+   is supposed to show up (see findActiveProgram). With no program
+   running there's no honest way to derive a personal target from the
+   user's own data, so it falls back to CAPABILITY_FREQUENCY_FLOOR —
+   sourced, general guidance, never presented as a personalized
+   number. */
+export function weeklyCapabilityStatus(data, unit, { now = new Date(), windowDays = 28 } = {}) {
+  const caps = [...new Set((data.goals || []).flatMap((g) => g.capabilities || []))];
+  const weekStartKey = startOfWeekKey(now);
+  const weekday = ((now.getDay() + 6) % 7) + 1; // Mon=1 .. Sun=7
+  const daysRemaining = 7 - weekday;
+  if (!caps.length) return { weekStartKey, daysElapsed: weekday, daysRemaining, items: [] };
+
+  const program = findActiveProgram(data, windowDays, now.getTime());
+  const plannedDaysForCap = (cap) => {
+    if (!program) return null;
+    return program.days.filter((d) =>
+      d.items.some((it) => data.exercises.find((e) => e.id === it.exerciseId)?.capabilities?.includes(cap))
+    ).length;
+  };
+
+  const todayKeyNow = todayKey(now);
+  const thisWeek = data.workouts.filter((w) => w.date >= weekStartKey && w.date <= todayKeyNow);
+
+  const items = caps.map((cap) => {
+    const actual = thisWeek.filter((w) =>
+      w.sets.some((s) => isCounted(s) && data.exercises.find((e) => e.id === s.exerciseId)?.capabilities?.includes(cap))
+    ).length;
+
+    const plannedDays = plannedDaysForCap(cap);
+    const target = plannedDays != null ? plannedDays : CAPABILITY_FREQUENCY_FLOOR[cap]?.perWeek ?? 2;
+    const source = plannedDays != null ? "program" : "guideline";
+    const note = source === "guideline" ? CAPABILITY_FREQUENCY_FLOOR[cap]?.note : null;
+
+    let status;
+    if (source === "program" && target === 0) status = "not-in-plan";
+    else if (actual >= target) status = "met";
+    else if (daysRemaining > 0) status = "in-progress";
+    else status = "missed";
+
+    return { capability: cap, label: CAPABILITIES[cap] || cap, actual, target, source, note, status };
+  });
+
+  return { weekStartKey, daysElapsed: weekday, daysRemaining, items };
 }
 
 export function balancedScorecard(data, unit, { sinceDays = 28, now = Date.now(), pairs = [] } = {}) {

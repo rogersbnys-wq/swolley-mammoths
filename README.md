@@ -171,6 +171,13 @@ main suite. `src/App.test.jsx` adds a handful of render-level smoke tests on top
   (strength-ratio + domain balance), and a session-completion summary screen. Also closed
   §8.10's data-durability gap (JSON import + a backup-due nag) — the PRD's own
   top-flagged risk, since Safari can evict `localStorage` under disk pressure on iPhone.
+- **Phase 6** ✅ — **"this week" capability status** on the Coach tab: per goal capability,
+  actual sessions logged this calendar week against a target — the real cadence of an
+  active multi-day program when one exists, or `CAPABILITY_FREQUENCY_FLOOR`'s sourced,
+  hedged frequency-floor guidance (train a pattern ≥2x/week) when it doesn't. Fills the
+  gap between `planCoverage` (checks the plan's blueprint, never whether it got trained)
+  and the balanced scorecard (compares patterns against each other, never against what a
+  goal actually needs).
 - **Next up — accounts + cloud sync (decided, not yet started).** Real sign-in with
   data following you across devices, replacing the current local-first/export-import
   model. This is the single biggest architectural change so far — it needs a backend
@@ -180,3 +187,9 @@ main suite. `src/App.test.jsx` adds a handful of render-level smoke tests on top
 - **Later** — IndexedDB migration, conversational coach, myth buster, progress photos,
   side-by-side comparison, nutrition/supplements. Onboarding wizard remains deliberately
   skipped — goal creation lives on the Coach tab instead of first-run.
+  - **LLM-personalized weekly targets.** The frequency floor above is deliberately
+    generic, sourced guidance — the same architectural fork as the conversational coach:
+    a live model call, grounded in the user's own goals, history, and equipment, could
+    replace it with an actually-reasoned recommendation instead of a population default.
+    Rides on the same backend as accounts/conversational coach; not worth its own
+    infrastructure before that lands.

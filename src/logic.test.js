@@ -11,6 +11,7 @@ import {
   mostTrainedExercise, topVerdict, CAPABILITY_COLORS,
   needsBackupReminder, importData, generateWarmupRamp,
   GOAL_TEMPLATES, SEED_EXERCISES, SEED_PLANS, CAPABILITIES,
+  weeklyCapabilityStatus, CAPABILITY_FREQUENCY_FLOOR,
 } from "./logic.js";
 
 const addDays = (date, n) => { const d = new Date(date); d.setDate(d.getDate() + n); return d; };
@@ -720,6 +721,101 @@ describe("adherence", () => {
       workouts: [{ date: recentDate(1), planId: null, sets: [] }],
     };
     expect(adherence(data, { windowDays: 28, now }).actualSessions).toBe(0);
+  });
+});
+
+describe("weeklyCapabilityStatus", () => {
+  // Wed 16 Sep 2026 — week runs Mon 14 through Sun 20.
+  const wed = new Date(2026, 8, 16);
+
+  it("returns no items when there are no goals to evaluate against", () => {
+    const data = { goals: [], exercises: [], plans: [], workouts: [] };
+    const r = weeklyCapabilityStatus(data, "lb", { now: wed });
+    expect(r.items).toEqual([]);
+    expect(r.weekStartKey).toBe("2026-09-14");
+  });
+
+  it("falls back to the frequency floor with no active program, and attaches its hedge note", () => {
+    const exercises = [barbell("sq", "Squat", ["squat"])];
+    const data = { goals: [{ id: "g1", capabilities: ["squat"] }], exercises, plans: [], workouts: [] };
+    const r = weeklyCapabilityStatus(data, "lb", { now: wed });
+    expect(r.items).toHaveLength(1);
+    const item = r.items[0];
+    expect(item.source).toBe("guideline");
+    expect(item.target).toBe(CAPABILITY_FREQUENCY_FLOOR.squat.perWeek);
+    expect(item.actual).toBe(0);
+    expect(item.status).toBe("in-progress"); // days remain this week
+    expect(item.note).toBeTruthy();
+  });
+
+  it("marks a capability met once this week's actual sessions reach the floor", () => {
+    const exercises = [barbell("sq", "Squat", ["squat"])];
+    const data = {
+      goals: [{ id: "g1", capabilities: ["squat"] }], exercises, plans: [],
+      workouts: [
+        { date: "2026-09-14", sets: [{ exerciseId: "sq" }] },
+        { date: "2026-09-15", sets: [{ exerciseId: "sq" }] },
+      ],
+    };
+    const r = weeklyCapabilityStatus(data, "lb", { now: wed });
+    expect(r.items[0].actual).toBe(2);
+    expect(r.items[0].status).toBe("met");
+  });
+
+  it("only counts sessions within the current calendar week", () => {
+    const exercises = [barbell("sq", "Squat", ["squat"])];
+    const data = {
+      goals: [{ id: "g1", capabilities: ["squat"] }], exercises, plans: [],
+      workouts: [{ date: "2026-09-13", sets: [{ exerciseId: "sq" }] }], // Sunday before this week
+    };
+    const r = weeklyCapabilityStatus(data, "lb", { now: wed });
+    expect(r.items[0].actual).toBe(0);
+  });
+
+  it("excludes warmup sets from the actual count", () => {
+    const exercises = [barbell("sq", "Squat", ["squat"])];
+    const data = {
+      goals: [{ id: "g1", capabilities: ["squat"] }], exercises, plans: [],
+      workouts: [{ date: "2026-09-15", sets: [{ exerciseId: "sq", warmup: true }] }],
+    };
+    const r = weeklyCapabilityStatus(data, "lb", { now: wed });
+    expect(r.items[0].actual).toBe(0);
+  });
+
+  it("uses an active program's own cadence as a real target instead of the floor", () => {
+    const exercises = [barbell("sq", "Squat", ["squat"]), barbell("dl", "Deadlift", ["hinge"])];
+    const plan = { id: "prog", days: [
+      { id: "d1", items: [{ exerciseId: "sq" }] },
+      { id: "d2", items: [{ exerciseId: "sq" }] },
+      { id: "d3", items: [{ exerciseId: "dl" }] },
+    ] };
+    const data = {
+      goals: [{ id: "g1", capabilities: ["squat", "horizontal_press"] }],
+      exercises, plans: [plan],
+      workouts: [{ date: "2026-09-14", planId: "prog", sets: [{ exerciseId: "sq" }] }],
+    };
+    const r = weeklyCapabilityStatus(data, "lb", { now: wed, windowDays: 28 });
+    const squatItem = r.items.find((i) => i.capability === "squat");
+    expect(squatItem.source).toBe("program");
+    expect(squatItem.target).toBe(2); // two of the program's three days include squat
+    expect(squatItem.note).toBeNull();
+
+    // the program never touches horizontal_press at all — that's a real
+    // zero from the plan itself, not "no data," so it reads distinctly
+    // from a met/in-progress capability rather than a false green check
+    const pressItem = r.items.find((i) => i.capability === "horizontal_press");
+    expect(pressItem.source).toBe("program");
+    expect(pressItem.target).toBe(0);
+    expect(pressItem.status).toBe("not-in-plan");
+  });
+
+  it("marks a capability missed once the week is over and the target wasn't met", () => {
+    const exercises = [barbell("sq", "Squat", ["squat"])];
+    const data = { goals: [{ id: "g1", capabilities: ["squat"] }], exercises, plans: [], workouts: [] };
+    const sun = new Date(2026, 8, 20); // last day of the same week
+    const r = weeklyCapabilityStatus(data, "lb", { now: sun });
+    expect(r.daysRemaining).toBe(0);
+    expect(r.items[0].status).toBe("missed");
   });
 });
 

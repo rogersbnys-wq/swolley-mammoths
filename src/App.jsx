@@ -9,6 +9,7 @@ import {
   describeCapabilities, mostTrainedExercise, topVerdict,
   needsBackupReminder, importData, generateWarmupRamp, planAllItems,
   equivalentLoad, substitutedPoints, adherence, sessionSummary,
+  weeklyCapabilityStatus,
 } from "./logic.js";
 
 /* a small colored dot for an exercise's primary capability — the
@@ -576,6 +577,8 @@ export default function SwolleyMammoths() {
   const insights = useMemo(() => (data ? coachInsights(data, unit) : []), [data, unit]);
 
   const adherenceInfo = useMemo(() => (data ? adherence(data, {}) : null), [data]);
+
+  const weekStatus = useMemo(() => (data ? weeklyCapabilityStatus(data, unit) : null), [data, unit]);
 
   const homeVerdict = useMemo(() => (data ? topVerdict(data, unit) : null), [data, unit]);
 
@@ -1464,6 +1467,41 @@ export default function SwolleyMammoths() {
               </>
             )}
 
+            {weekStatus && weekStatus.items.length > 0 && (
+              <>
+                <div className="prompt coach__section">This week</div>
+                <div className="weekcard">
+                  {weekStatus.items.map((it) => (
+                    <div className="weekrow" key={it.capability}>
+                      <div className="weekrow__head">
+                        <span><CapDot capability={it.capability} />{it.label}</span>
+                        <span className={`weekrow__status weekrow__status--${it.status}`}>
+                          {it.status === "met" ? "on track"
+                            : it.status === "missed" ? "missed"
+                            : it.status === "not-in-plan" ? "not in plan"
+                            : "in progress"}
+                        </span>
+                      </div>
+                      <div className="weekrow__nums">
+                        {it.status === "not-in-plan"
+                          ? "Your current program doesn't include this"
+                          : `${it.actual} of ${it.target} session${it.target === 1 ? "" : "s"} this week`}
+                        {it.source === "guideline" && it.status !== "not-in-plan" && (
+                          <span className="weekrow__src"> · general guidance</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {/* the frequency-floor note is the same text for every
+                    capability sharing a domain (strength, endurance, …) —
+                    show each distinct one once here rather than repeating
+                    a paragraph per row */}
+                {[...new Set(weekStatus.items.filter((i) => i.note && i.status !== "met").map((i) => i.note))]
+                  .map((note, i) => <div className="weekcard__note" key={i}>{note}</div>)}
+              </>
+            )}
+
             {adherenceInfo && (
               <div className="adherence">
                 <div className="adherence__num">
@@ -1981,6 +2019,17 @@ const CSS = `
 .verdict__arm{margin-top:9px;font-family:var(--mono);font-size:10.5px;color:var(--gold);}
 
 .change{font-size:13px;line-height:1.5;padding:10px 0;border-bottom:1px solid var(--line);}
+
+.weekcard{display:flex;flex-direction:column;gap:8px;}
+.weekrow{padding:11px 13px;background:var(--raised);border:1px solid var(--line);border-radius:9px;}
+.weekrow__head{display:flex;justify-content:space-between;align-items:center;font-size:13.5px;font-weight:550;}
+.weekrow__status{font-family:var(--mono);font-size:10px;text-transform:uppercase;color:var(--dim);}
+.weekrow__status--met{color:var(--green);}
+.weekrow__status--missed{color:var(--red);}
+.weekrow__status--not-in-plan{color:var(--dim);}
+.weekrow__nums{font-family:var(--mono);font-size:11px;color:var(--dim);margin-top:3px;}
+.weekrow__src{font-style:italic;}
+.weekcard__note{font-size:12px;color:var(--dim);line-height:1.5;margin-top:8px;}
 
 .adherence{margin-top:18px;padding:14px 15px;background:var(--raised);border:1px solid var(--line);border-radius:9px;}
 .adherence__num{font-size:14px;font-weight:600;}
