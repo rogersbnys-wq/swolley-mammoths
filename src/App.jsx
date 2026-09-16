@@ -5,7 +5,7 @@ import {
   platesPerSide, setLabel, setScore, isCounted, estimate1RM, bestScore,
   seed, currentBodyweight, migrate,
   canArmTarget, pace, bodyweightAdjustedStrength, coachInsights,
-  goalVerdict, evaluatePlanOnSave, balancedScorecard, rankedChanges,
+  goalVerdict, evaluatePlanOnSave, balancedScorecard, rankedChanges, goalProgressTrend,
   describeCapabilities, mostTrainedExercise, topVerdict,
   needsBackupReminder, importData, generateWarmupRamp, planAllItems,
   equivalentLoad, substitutedPoints, adherence, sessionSummary,
@@ -255,7 +255,7 @@ function Picker({ data, unit, picker, onPick, onClose, newName, setNewName, newM
 
 /* ---------- Coach: verdict card + goal creation/arming ---------- */
 
-function VerdictCard({ verdict, onArm, canArm }) {
+function VerdictCard({ verdict, onArm, canArm, trends }) {
   const { goal, status, headline, pace: p } = verdict;
   return (
     <div className={`verdict verdict--${status}`}>
@@ -272,6 +272,19 @@ function VerdictCard({ verdict, onArm, canArm }) {
           {p.onPace
             ? `${round1(p.current)} now · ${round1(p.requiredPerWeekNow)}/wk keeps it`
             : `behind by ${round1(Math.abs(p.gap))} · need ${round1(Math.abs(p.requiredPerWeekNow))}/wk from here`}
+        </div>
+      )}
+      {/* the structural verdict above says whether the plan reaches this
+          goal; this says whether it's actually working — the same
+          best-score trend the Lifts tab shows, pulled up here so you
+          don't have to go check each lift yourself (§8.5d). */}
+      {trends && trends.length > 0 && (
+        <div className="verdict__trends">
+          {trends.map((t) => (
+            <span className={`verdict__trend ${t.trend >= 0 ? "up" : "down"}`} key={t.capability}>
+              {t.exerciseName} {t.trend >= 0 ? "+" : ""}{t.trend}
+            </span>
+          ))}
         </div>
       )}
       {canArm && !goal.target && (
@@ -579,6 +592,13 @@ export default function SwolleyMammoths() {
   const adherenceInfo = useMemo(() => (data ? adherence(data, {}) : null), [data]);
 
   const weekStatus = useMemo(() => (data ? weeklyCapabilityStatus(data, unit) : null), [data, unit]);
+
+  const goalTrends = useMemo(() => {
+    const map = {};
+    if (!data) return map;
+    (data.goals || []).forEach((g) => { map[g.id] = goalProgressTrend(g, data, unit); });
+    return map;
+  }, [data, unit]);
 
   const homeVerdict = useMemo(() => (data ? topVerdict(data, unit) : null), [data, unit]);
 
@@ -1455,7 +1475,7 @@ export default function SwolleyMammoths() {
             )}
             <div className="cardgrid">
               {goalVerdicts.map((v) => (
-                <VerdictCard key={v.goal.id} verdict={v} onArm={setArmingGoalId} canArm={canArmTarget(v.goal, data, unit)} />
+                <VerdictCard key={v.goal.id} verdict={v} onArm={setArmingGoalId} canArm={canArmTarget(v.goal, data, unit)} trends={goalTrends[v.goal.id]} />
               ))}
             </div>
             <button className="ghost" onClick={() => setGoalSheet(true)}>+ Add a goal</button>
@@ -2016,6 +2036,9 @@ const CSS = `
 .verdict__caps .capdot{margin-right:0;}
 .verdict__headline{font-size:13.5px;line-height:1.5;margin-top:6px;}
 .verdict__num{font-family:var(--mono);font-size:11px;color:var(--dim);margin-top:6px;}
+.verdict__trends{display:flex;flex-wrap:wrap;gap:3px 10px;margin-top:8px;}
+.verdict__trend{font-family:var(--mono);font-size:11px;color:var(--dim);}
+.verdict__trend.up{color:var(--gold);}
 .verdict__arm{margin-top:9px;font-family:var(--mono);font-size:10.5px;color:var(--gold);}
 
 .change{font-size:13px;line-height:1.5;padding:10px 0;border-bottom:1px solid var(--line);}

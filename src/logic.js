@@ -1248,6 +1248,38 @@ export function mostTrainedExercise(workouts, exercises, capability) {
   return ranked[0].n > 0 ? ranked[0].id : null;
 }
 
+/* the "is this actually working" signal that already existed per-lift
+   on the Lifts tab (spark line + best-score delta) but was stranded
+   there, disconnected from the goal it's supposed to be evidence for.
+   For each of the goal's capabilities, picks the most-trained exercise
+   (mostTrainedExercise) and reports the same best-score trend the
+   Lifts tab computes — first logged session's best vs. the most recent
+   — including sessions where a mid-program swap substituted a
+   different exercise (substitutedPoints), so a swap doesn't fracture
+   the line. A capability needs at least two sessions to report a
+   trend at all; with only one, there's nothing to compare yet, so
+   it's omitted rather than shown as a misleading "flat." */
+export function goalProgressTrend(goal, data, unit) {
+  if (!goal.capabilities || !goal.capabilities.length) return [];
+  const bw = currentBodyweight(data, unit);
+  return goal.capabilities.map((cap) => {
+    const exId = mostTrainedExercise(data.workouts, data.exercises, cap);
+    const ex = exId && data.exercises.find((e) => e.id === exId);
+    if (!ex) return null;
+
+    const direct = [];
+    data.workouts.forEach((w) => {
+      const sets = w.sets.filter((s) => s.exerciseId === exId && isCounted(s));
+      if (sets.length) direct.push({ date: w.date, score: Math.max(...sets.map((s) => setScore(s, ex, unit, bw))) });
+    });
+    const merged = [...direct, ...substitutedPoints(data, exId, unit)].sort((a, b) => (a.date < b.date ? -1 : 1));
+    if (merged.length < 2) return null;
+
+    const pts = merged.map((p) => p.score);
+    return { capability: cap, exerciseId: exId, exerciseName: ex.name, trend: round1(pts[pts.length - 1] - pts[0]) };
+  }).filter(Boolean);
+}
+
 const STATUS_RANK = { red: 0, amber: 1, unknown: 2, green: 3 };
 
 /* the single goal most worth surfacing on the home screen (§6.1 #1) —

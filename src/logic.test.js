@@ -11,7 +11,7 @@ import {
   mostTrainedExercise, topVerdict, CAPABILITY_COLORS,
   needsBackupReminder, importData, generateWarmupRamp,
   GOAL_TEMPLATES, SEED_EXERCISES, SEED_PLANS, CAPABILITIES,
-  weeklyCapabilityStatus, CAPABILITY_FREQUENCY_FLOOR,
+  weeklyCapabilityStatus, CAPABILITY_FREQUENCY_FLOOR, goalProgressTrend,
 } from "./logic.js";
 
 const addDays = (date, n) => { const d = new Date(date); d.setDate(d.getDate() + n); return d; };
@@ -1167,6 +1167,66 @@ describe("mostTrainedExercise", () => {
       { exerciseId: "incline", warmup: false },
     ] }];
     expect(mostTrainedExercise(workouts, exercises, "horizontal_press")).toBe("bench");
+  });
+});
+
+describe("goalProgressTrend", () => {
+  it("returns nothing for a goal with no capabilities", () => {
+    expect(goalProgressTrend({ capabilities: [] }, { exercises: [], workouts: [] }, "lb")).toEqual([]);
+  });
+
+  it("omits a capability with no logged exercise at all", () => {
+    const exercises = [barbell("bench", "Bench", ["horizontal_press"])];
+    const goal = { capabilities: ["horizontal_press", "squat"] };
+    const data = { exercises, workouts: [] };
+    expect(goalProgressTrend(goal, data, "lb")).toEqual([]);
+  });
+
+  it("omits a capability with only one logged session — nothing to compare yet", () => {
+    const exercises = [barbell("bench", "Bench", ["horizontal_press"])];
+    const goal = { capabilities: ["horizontal_press"] };
+    const data = {
+      exercises,
+      workouts: [{ date: "2026-01-01", sets: [{ exerciseId: "bench", weight: 100, reps: 5 }] }],
+    };
+    expect(goalProgressTrend(goal, data, "lb")).toEqual([]);
+  });
+
+  it("reports the best-score delta from first to most recent session, for the most-trained exercise", () => {
+    const exercises = [
+      barbell("bench", "Bench", ["horizontal_press"]),
+      barbell("incline", "Incline Press", ["horizontal_press"]),
+    ];
+    const goal = { capabilities: ["horizontal_press"] };
+    const data = {
+      exercises,
+      workouts: [
+        { date: "2026-01-01", sets: [{ exerciseId: "bench", weight: 100, reps: 5 }] },
+        { date: "2026-01-08", sets: [{ exerciseId: "bench", weight: 110, reps: 5 }] },
+        { date: "2026-01-15", sets: [{ exerciseId: "bench", weight: 115, reps: 5 }] },
+        { date: "2026-01-01", sets: [{ exerciseId: "incline", weight: 50, reps: 5 }] }, // fewer sets, loses the pick
+      ],
+    };
+    const trend = goalProgressTrend(goal, data, "lb");
+    expect(trend).toHaveLength(1);
+    expect(trend[0].exerciseId).toBe("bench");
+    expect(trend[0].trend).toBeGreaterThan(0);
+  });
+
+  it("reports one entry per capability the goal covers", () => {
+    const exercises = [barbell("bench", "Bench", ["horizontal_press"]), barbell("sq", "Squat", ["squat"])];
+    const goal = { capabilities: ["horizontal_press", "squat"] };
+    const data = {
+      exercises,
+      workouts: [
+        { date: "2026-01-01", sets: [{ exerciseId: "bench", weight: 100, reps: 5 }, { exerciseId: "sq", weight: 200, reps: 5 }] },
+        { date: "2026-01-08", sets: [{ exerciseId: "bench", weight: 95, reps: 5 }, { exerciseId: "sq", weight: 210, reps: 5 }] },
+      ],
+    };
+    const trend = goalProgressTrend(goal, data, "lb");
+    expect(trend.map((t) => t.capability).sort()).toEqual(["horizontal_press", "squat"]);
+    const press = trend.find((t) => t.capability === "horizontal_press");
+    expect(press.trend).toBeLessThan(0); // dropped from 100 to 95
   });
 });
 
