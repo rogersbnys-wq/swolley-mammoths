@@ -3,7 +3,9 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
-  // If deploying to GitHub Pages at username.github.io/swolley-mammoths,
-  // uncomment the line below. Netlify and Vercel need it left alone.
-  // base: "/swolley-mammoths/",
+  // Deployed at rogersbnys-wq.github.io/swolley-mammoths via GitHub
+  // Pages (see .github/workflows/deploy-pages.yml). Netlify or Vercel
+  // would need this commented back out, since they serve from a root
+  // domain rather than a subpath.
+  base: "/swolley-mammoths/",
 });

@@ -21,45 +21,34 @@ and open the network address it prints.
 
 ## Deploy it
 
-### Netlify (easiest)
+### GitHub Pages (current)
 
-1. Push this folder to a new GitHub repo.
-2. Go to [app.netlify.com](https://app.netlify.com) → **Add new site** → **Import an existing project**.
-3. Pick the repo. Netlify detects Vite automatically; confirm the settings are:
-   - Build command: `npm run build`
-   - Publish directory: `dist`
-4. Deploy. You get a URL like `swolley-mammoths.netlify.app`.
-5. Optional: **Site settings → Change site name** to something you like.
+Live at `rogersbnys-wq.github.io/swolley-mammoths`, deployed by
+[`.github/workflows/deploy-pages.yml`](.github/workflows/deploy-pages.yml) — every push to
+`main` runs the tests, builds, and publishes automatically. No separate hosting account,
+so no separate billing relationship that can hit a wall (this replaced Netlify after that
+team's plan paused production deploys with zero warning on the app itself — the git repo
+kept taking pushes fine, the deploy step just silently stopped happening).
 
-Every push to `main` redeploys automatically.
+One-time setup this workflow can't do on its own: in the repo's **Settings → Pages**, set
+**Source** to **GitHub Actions**. After that it's hands-off.
 
-### Vercel
-
-Same flow at [vercel.com/new](https://vercel.com/new) — import the repo, accept the
-detected Vite preset, deploy.
-
-### GitHub Pages
-
-Pages serves from a subpath, so first uncomment this line in `vite.config.js`:
+Pages serves from a subpath, which is why `vite.config.js` sets:
 
 ```js
 base: "/swolley-mammoths/",
 ```
 
-Then build and publish `dist/`. Simplest route is the `gh-pages` package:
+Deploying somewhere else (Netlify, Vercel, a custom domain) needs this commented back out
+first — those serve from the domain root instead.
 
-```bash
-npm install -D gh-pages
-```
+### Netlify / Vercel
 
-Add to `package.json` scripts:
-
-```json
-"deploy": "npm run build && gh-pages -d dist"
-```
-
-Then `npm run deploy`, and in the repo's **Settings → Pages**, set the source to the
-`gh-pages` branch.
+Both work the same way: push this repo to GitHub, then at
+[app.netlify.com](https://app.netlify.com) or [vercel.com/new](https://vercel.com/new),
+**import the repo** — either one detects Vite automatically (build command `npm run build`,
+publish directory `dist`) and redeploys on every push to `main`. Remember to comment out
+the `base` line above first.
 
 ---
 
