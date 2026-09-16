@@ -255,16 +255,19 @@ function Picker({ data, unit, picker, onPick, onClose, newName, setNewName, newM
 
 /* ---------- Coach: verdict card + goal creation/arming ---------- */
 
-function VerdictCard({ verdict, onArm, canArm, trends }) {
+function VerdictCard({ verdict, onArm, canArm, trends, onRemove }) {
   const { goal, status, headline, pace: p } = verdict;
   return (
     <div className={`verdict verdict--${status}`}>
       <div className="verdict__top">
         <span className={`verdict__dot verdict__dot--${status}`} aria-hidden="true" />
         <span className="verdict__label">{goal.label}</span>
-        {goal.capabilities?.length > 0 && (
-          <span className="verdict__caps">{goal.capabilities.map((c) => <CapDot key={c} capability={c} />)}</span>
-        )}
+        <span className="verdict__topR">
+          {goal.capabilities?.length > 0 && (
+            <span className="verdict__caps">{goal.capabilities.map((c) => <CapDot key={c} capability={c} />)}</span>
+          )}
+          <button className="verdict__del" onClick={() => onRemove(goal)} aria-label="delete goal" title="Delete goal">×</button>
+        </span>
       </div>
       <div className="verdict__headline">{headline}</div>
       {p && p.gap != null && p.outcome == null && (
@@ -917,8 +920,10 @@ export default function SwolleyMammoths() {
     setGoalSheet(false);
   };
 
-  const removeGoal = (goalId) =>
-    setData((d) => ({ ...d, goals: d.goals.filter((g) => g.id !== goalId) }));
+  const removeGoal = (goal) => {
+    if (!window.confirm(`Delete the goal "${goal.label}"? This can't be undone.`)) return;
+    setData((d) => ({ ...d, goals: d.goals.filter((g) => g.id !== goal.id) }));
+  };
 
   const armTarget = (goalId, target) => {
     setData((d) => ({ ...d, goals: d.goals.map((g) => (g.id === goalId ? { ...g, target } : g)) }));
@@ -1475,7 +1480,7 @@ export default function SwolleyMammoths() {
             )}
             <div className="cardgrid">
               {goalVerdicts.map((v) => (
-                <VerdictCard key={v.goal.id} verdict={v} onArm={setArmingGoalId} canArm={canArmTarget(v.goal, data, unit)} trends={goalTrends[v.goal.id]} />
+                <VerdictCard key={v.goal.id} verdict={v} onArm={setArmingGoalId} canArm={canArmTarget(v.goal, data, unit)} trends={goalTrends[v.goal.id]} onRemove={removeGoal} />
               ))}
             </div>
             <button className="ghost" onClick={() => setGoalSheet(true)}>+ Add a goal</button>
@@ -2032,8 +2037,10 @@ const CSS = `
 .verdict__dot{width:7px;height:7px;border-radius:50%;background:var(--dim);flex:0 0 auto;}
 .verdict__dot--red{background:var(--red);} .verdict__dot--amber{background:var(--gold);} .verdict__dot--green{background:var(--green);}
 .verdict__label{font-size:13.5px;font-weight:600;}
-.verdict__caps{display:flex;gap:2px;margin-left:auto;}
+.verdict__topR{display:flex;align-items:center;gap:8px;margin-left:auto;}
+.verdict__caps{display:flex;gap:2px;}
 .verdict__caps .capdot{margin-right:0;}
+.verdict__del{color:var(--dim);font-size:16px;line-height:1;padding:0;}
 .verdict__headline{font-size:13.5px;line-height:1.5;margin-top:6px;}
 .verdict__num{font-family:var(--mono);font-size:11px;color:var(--dim);margin-top:6px;}
 .verdict__trends{display:flex;flex-wrap:wrap;gap:3px 10px;margin-top:8px;}
