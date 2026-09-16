@@ -695,11 +695,13 @@ export default function SwolleyMammoths() {
     const label = day ? `${plan.name} — ${day.name}` : plan.name;
     setPlanSheet(false);
     if (!session) { startSession(planId, dayId); return; }
-    updateSession((w) => ({
-      ...w,
-      planName: w.queue.length === 0 && w.planName === "Freestyle" ? label : `${w.planName} + ${label}`,
-      queue: [...w.queue, ...items.map((i) => ({ ...i, id: uid() }))],
-    }));
+    updateSession((w) => {
+      const existingParts = w.planName === "Freestyle" ? [] : w.planName.split(" + ");
+      const planName = w.queue.length === 0 && w.planName === "Freestyle" ? label
+        : existingParts.includes(label) ? w.planName // already loaded — don't repeat it in the label
+        : [...existingParts, label].join(" + ");
+      return { ...w, planName, queue: [...w.queue, ...items.map((i) => ({ ...i, id: uid() }))] };
+    });
   };
 
   /* a plan with 2+ days needs a day choice first; a plain plan (or a
@@ -1791,8 +1793,14 @@ export default function SwolleyMammoths() {
 
         {tab === "history" && (
           <>
-            {data.workouts.length === 0 && <div className="empty">No sessions yet.</div>}
-            {data.workouts.slice().sort((a, b) => (a.date < b.date ? 1 : -1)).map((w) => {
+            {/* a session with nothing logged in it (started, then
+                abandoned, or emptied out by deleting its last set) isn't
+                real history — same "did anything actually happen" bar
+                adherence() already uses elsewhere. It stays in storage
+                (today's in-progress session needs to, mid-log) but
+                doesn't clutter this list. */}
+            {data.workouts.filter((w) => w.sets.length > 0).length === 0 && <div className="empty">No sessions yet.</div>}
+            {data.workouts.filter((w) => w.sets.length > 0).sort((a, b) => (a.date < b.date ? 1 : -1)).map((w) => {
               const byEx = {};
               w.sets.forEach((s) => { (byEx[s.exerciseId] = byEx[s.exerciseId] || []).push(s); });
               return (

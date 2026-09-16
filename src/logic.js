@@ -454,6 +454,20 @@ function reconcileExercises(stored) {
   return [...reconciled, ...SEED_EXERCISES.filter((e) => !knownIds.has(e.id))];
 }
 
+/* a bug (fixed) let loadPlanIntoSession append the same plan's label
+   onto planName every time it was loaded into an already-active
+   session, with no dedup — repeatedly loading "Run" produced
+   "... + Run + Run + Run" instead of just "... + Run". This heals any
+   already-saved session with that shape on the next load, rather than
+   only preventing new occurrences. */
+function dedupePlanName(name) {
+  if (!name || name === "Freestyle") return name;
+  const parts = name.split(" + ");
+  const seen = new Set();
+  const deduped = parts.filter((p) => (seen.has(p) ? false : (seen.add(p), true)));
+  return deduped.join(" + ");
+}
+
 export function migrate(data) {
   if (!data) return null;
   const unitFallback = data.unit || "lb";
@@ -468,6 +482,7 @@ export function migrate(data) {
     workouts: (data.workouts || []).map((w) => ({
       queue: [], planName: "Freestyle",
       ...w,
+      planName: dedupePlanName(w.planName || "Freestyle"),
       sets: w.sets.map((s) => ({
         unit: unitFallback, note: "", seconds: 0, warmup: false, pain: false, pr: false,
         scheme: "straight", distance: 0, heartRate: null,

@@ -345,6 +345,24 @@ describe("seed / currentBodyweight / bodyweightAsOf / migrate", () => {
     expect(migrate(null)).toBeNull();
   });
 
+  it("migrate heals a planName already corrupted by the old loadPlanIntoSession dedup bug", () => {
+    const staleData = { workouts: [
+      { date: "2026-01-01", planName: "Push Day + Pull Day + Push Day + Run + Run + Run", sets: [{ exerciseId: "e2" }] },
+    ] };
+    const migrated = migrate(staleData);
+    expect(migrated.workouts[0].planName).toBe("Push Day + Pull Day + Run");
+  });
+
+  it("migrate leaves a normal planName alone", () => {
+    const staleData = { workouts: [{ date: "2026-01-01", planName: "Push Day + Pull Day", sets: [{ exerciseId: "e2" }] }] };
+    expect(migrate(staleData).workouts[0].planName).toBe("Push Day + Pull Day");
+  });
+
+  it("migrate leaves Freestyle alone", () => {
+    const staleData = { workouts: [{ date: "2026-01-01", planName: "Freestyle", sets: [] }] };
+    expect(migrate(staleData).workouts[0].planName).toBe("Freestyle");
+  });
+
   it("migrate upgrades a catalog exercise to the current seed definition, even when the device saved it before the catalog changed", () => {
     // simulates a real device whose save predates the timed->cardio move for Run
     const staleData = {
