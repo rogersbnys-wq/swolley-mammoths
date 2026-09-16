@@ -392,6 +392,43 @@ function ArmTargetSheet({ goal, data, unit, onSave, onClose }) {
   );
 }
 
+/* bodyweight as a real time series, not just a mutable "current"
+   number: every entry keeps its own date, so a correction or a
+   backfilled day doesn't erase the trend the rest of the app (the
+   Lifts card's spark, bwStrength's before/after) already reads it as. */
+function BodyweightSheet({ log, unit, onSave, onDelete, onClose }) {
+  const [date, setDate] = useState(todayKey());
+  const [weight, setWeight] = useState(0);
+  const sorted = [...(log || [])].sort((a, b) => (a.date < b.date ? 1 : -1));
+
+  return (
+    <div className="sheet" onClick={onClose}>
+      <div className="sheet__in" onClick={(e) => e.stopPropagation()}>
+        <div className="sheet__hd">Bodyweight history</div>
+        <div className="sheet__list">
+          {sorted.length === 0 && <div className="empty">No entries yet.</div>}
+          {sorted.map((e) => (
+            <div className="bwrow" key={e.date}>
+              <span className="bwrow__date">{prettyDate(e.date)}</span>
+              <span className="bwrow__v">{round1(convert(e.weight, e.unit || "lb", unit))}{unit}</span>
+              <button className="bwrow__del" onClick={() => onDelete(e.date)} aria-label="delete entry" title="Delete entry">×</button>
+            </div>
+          ))}
+        </div>
+        <div className="sheet__hint">Add or correct an entry — same date overwrites what's there.</div>
+        <div className="goal__armrow">
+          <label>Date</label>
+          <input type="date" value={date} max={todayKey()} onChange={(e) => setDate(e.target.value)} />
+        </div>
+        <Stepper label="Weight" value={weight} onChange={setWeight} step={unit === "kg" ? 0.5 : 1} min={0} suffix={unit} />
+        <button className="sheet__addb goal__save" onClick={() => { if (weight > 0) { onSave(weight, date); setWeight(0); } }}>
+          Save entry
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /* §8.1 — edit a logged set in place. AMRAP/EMOM's timing fields
    aren't editable here (delete + re-log covers that rare case);
    weight, reps/seconds/distance, note, warmup, and pain are. */
@@ -528,6 +565,18 @@ export default function SwolleyMammoths() {
   const today = todayKey();
 
   const bodyweight = useMemo(() => (data ? currentBodyweight(data, unit) : 0), [data, unit]);
+
+  /* the log as a real time series (each entry keeps its own date and
+     its own logged unit), sorted oldest-first for the spark + trend —
+     same convention the Lifts tab already uses for every exercise */
+  const bwHistory = useMemo(() => {
+    if (!data) return [];
+    return (data.bodyweightLog || [])
+      .slice()
+      .sort((a, b) => (a.date < b.date ? -1 : 1))
+      .map((e) => ({ date: e.date, weight: round1(convert(e.weight, e.unit || "lb", unit)) }));
+  }, [data, unit]);
+  const [bwSheet, setBwSheet] = useState(false);
   const session = useMemo(() => data?.workouts.find((w) => w.date === today) || null, [data, today]);
   const exById = (id) => data?.exercises.find((e) => e.id === id) || null;
   const openEx = openExId ? exById(openExId) : null;
@@ -928,13 +977,16 @@ export default function SwolleyMammoths() {
       return { ...p, days };
     });
 
-  const logBodyweight = (value) => {
+  const logBodyweight = (value, date = today) => {
     if (!(value > 0)) return;
     setData((d) => {
-      const log = (d.bodyweightLog || []).filter((e) => e.date !== today);
-      return { ...d, bodyweightLog: [...log, { date: today, weight: value, unit }] };
+      const log = (d.bodyweightLog || []).filter((e) => e.date !== date);
+      return { ...d, bodyweightLog: [...log, { date, weight: value, unit }] };
     });
   };
+
+  const deleteBodyweightEntry = (date) =>
+    setData((d) => ({ ...d, bodyweightLog: (d.bodyweightLog || []).filter((e) => e.date !== date) }));
 
   /* feeds coachInsights' consistency check — without this set, the
      app has no denominator to compare actual sessions/week against */
@@ -1646,6 +1698,25 @@ export default function SwolleyMammoths() {
               </div>
             </div>
 
+            {/* the +/- stepper above only ever touches today — this is
+                the actual time series it's been building underneath,
+                and the only way to see, correct, or backfill any of it */}
+            <button className="bwtrend" onClick={() => setBwSheet(true)}>
+              {bwHistory.length > 1 ? (
+                <>
+                  <Spark points={bwHistory.map((e) => e.weight)}
+                    color={bwHistory[bwHistory.length - 1].weight >= bwHistory[0].weight ? "#D9A521" : "#7E848E"} />
+                  <span className={`bwtrend__d ${bwHistory[bwHistory.length - 1].weight >= bwHistory[0].weight ? "up" : "down"}`}>
+                    {bwHistory[bwHistory.length - 1].weight >= bwHistory[0].weight ? "+" : ""}
+                    {round1(bwHistory[bwHistory.length - 1].weight - bwHistory[0].weight)}{unit}
+                  </span>
+                </>
+              ) : (
+                <span className="bwtrend__empty">No history yet</span>
+              )}
+              <span className="bwtrend__hist">History ›</span>
+            </button>
+
             <div className="bw">
               <div className="bw__l">
                 <div className="bw__hd">Training days/week</div>
@@ -1772,6 +1843,14 @@ export default function SwolleyMammoths() {
       {pickerEl}
       {goalSheet && <GoalSheet data={data} unit={unit} onSave={addGoal} onClose={() => setGoalSheet(false)} />}
       {armingGoal && <ArmTargetSheet goal={armingGoal} data={data} unit={unit} onSave={armTarget} onClose={() => setArmingGoalId(null)} />}
+      {bwSheet && (
+        <BodyweightSheet
+          log={data.bodyweightLog || []} unit={unit}
+          onSave={(value, date) => logBodyweight(value, date)}
+          onDelete={(date) => { if (window.confirm("Delete this bodyweight entry? This can't be undone.")) deleteBodyweightEntry(date); }}
+          onClose={() => setBwSheet(false)}
+        />
+      )}
 
       {planSheet && (
         <div className="sheet" onClick={() => setPlanSheet(false)}>
@@ -2017,6 +2096,15 @@ const CSS = `
 .bw__ctl button{width:34px;height:34px;border-radius:6px;background:#2C313A;font-size:19px;line-height:1;}
 .bw__v{font-family:var(--mono);font-size:19px;min-width:58px;text-align:center;}
 .bw__v i{font-size:10px;color:var(--dim);font-style:normal;margin-left:1px;}
+.bwtrend{display:flex;align-items:center;gap:10px;width:100%;padding:11px 15px;background:var(--raised);border:1px solid var(--line);border-radius:9px;margin-bottom:16px;margin-top:-8px;}
+.bwtrend__d{font-family:var(--mono);font-size:12px;min-width:44px;}
+.bwtrend__d.up{color:var(--gold);} .bwtrend__d.down{color:var(--dim);}
+.bwtrend__empty{font-family:var(--mono);font-size:11px;color:var(--dim);flex:1;}
+.bwtrend__hist{font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);margin-left:auto;}
+.bwrow{display:flex;align-items:center;justify-content:space-between;padding:9px 4px;border-bottom:1px solid var(--line);}
+.bwrow__date{font-size:13px;}
+.bwrow__v{font-family:var(--mono);font-size:12.5px;color:var(--dim);margin-left:auto;margin-right:12px;}
+.bwrow__del{color:var(--dim);font-size:16px;line-height:1;}
 .prow__edit{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);border:1px solid var(--line);border-radius:4px;padding:5px 9px;margin-right:4px;}
 
 .prow{display:flex;align-items:center;border-bottom:1px solid var(--line);}
