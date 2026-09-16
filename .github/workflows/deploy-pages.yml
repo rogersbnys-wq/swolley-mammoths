@@ -30,7 +30,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # jsdom 30's bundled undici calls a webidl internal
+          # (markAsUncloneable) that Node 20 doesn't expose, which
+          # crashes every test with "is not a function" before a
+          # single one runs — nothing to do with this repo's own
+          # code. Node 22 (LTS, and what this project is actually
+          # developed against) has it.
+          node-version: 22
           cache: npm
       - run: npm ci
       - run: npm test
