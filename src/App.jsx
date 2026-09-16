@@ -2158,7 +2158,7 @@ const CSS = `
 
 .sesh{padding:16px 0;border-bottom:1px solid var(--line);}
 .sesh__hd{display:flex;justify-content:space-between;align-items:center;font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;color:var(--dim);}
-.sesh__del{color:var(--dim);font-size:15px;line-height:1;padding:2px 0 2px 10px;}
+.sesh__del{color:var(--dim);font-size:22px;line-height:1;padding:4px 2px 4px 14px;flex:0 0 auto;}
 .sesh__date{color:var(--chalk);}
 .sesh__ex{margin-top:12px;}
 .sesh__exname{font-size:13.5px;font-weight:550;}
