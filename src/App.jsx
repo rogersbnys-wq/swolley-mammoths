@@ -395,7 +395,7 @@ function ArmTargetSheet({ goal, data, unit, onSave, onClose }) {
 /* §8.1 — edit a logged set in place. AMRAP/EMOM's timing fields
    aren't editable here (delete + re-log covers that rare case);
    weight, reps/seconds/distance, note, warmup, and pain are. */
-function EditSetSheet({ set, ex, unit, spec, onSave, onClose }) {
+function EditSetSheet({ set, ex, unit, spec, onSave, onDelete, onClose }) {
   const [weight, setWeight] = useState(set.weight || 0);
   const [reps, setReps] = useState(set.reps || 0);
   const [seconds, setSeconds] = useState(set.seconds || 0);
@@ -435,7 +435,12 @@ function EditSetSheet({ set, ex, unit, spec, onSave, onClose }) {
           <button className={`flags__b ${warmup ? "on" : ""}`} onClick={() => setWarmup((v) => !v)}>Warmup</button>
           <button className={`flags__b flags__b--pain ${pain ? "on" : ""}`} onClick={() => setPain((v) => !v)}>⚠ Pain</button>
         </div>
-        <button className="sheet__addb goal__save" onClick={save}>Save changes</button>
+        <button className={`sheet__addb ${onDelete ? "" : "goal__save"}`} onClick={save}>Save changes</button>
+        {/* no confirm here — deleting goes through the same 6-second
+            undo toast as the inline × elsewhere, so a dialog would just
+            be a second, redundant speed bump on an already-reversible
+            action */}
+        {onDelete && <button className="sheet__del goal__save" onClick={() => onDelete(set.id)}>Delete set</button>}
       </div>
     </div>
   );
@@ -508,6 +513,7 @@ export default function SwolleyMammoths() {
   const [armingGoalId, setArmingGoalId] = useState(null);
   const [planCritique, setPlanCritique] = useState(null);
   const [editingSetId, setEditingSetId] = useState(null);
+  const [editingHistSet, setEditingHistSet] = useState(null); // { workoutId, setId } — History tab
   const [lastDeleted, setLastDeleted] = useState(null);
   const [rest, setRest] = useState(null); // { endAt, total } | null
   const [dayPicker, setDayPicker] = useState(null); // { planId, action: "start" | "load" } | null
@@ -749,12 +755,17 @@ export default function SwolleyMammoths() {
 
   /* §8.1 — a deleted set can be restored within 6 seconds; the set
      itself (not just an id) is captured since it's already gone from
-     `data` by the time the undo window is showing */
-  const deleteSet = (setId) => {
-    const removed = session?.sets.find((s) => s.id === setId);
-    updateSession((w) => ({ ...w, sets: w.sets.filter((s) => s.id !== setId) }));
+     `data` by the time the undo window is showing. Keyed by workoutId
+     rather than assuming "today" so the same undo flow covers editing
+     a past session from History, not just the one in progress. */
+  const deleteSet = (workoutId, setId) => {
+    const removed = data.workouts.find((w) => w.id === workoutId)?.sets.find((s) => s.id === setId);
+    setData((d) => ({
+      ...d,
+      workouts: d.workouts.map((w) => (w.id === workoutId ? { ...w, sets: w.sets.filter((s) => s.id !== setId) } : w)),
+    }));
     if (!removed) return;
-    setLastDeleted({ set: removed, date: today });
+    setLastDeleted({ set: removed, workoutId });
     setTimeout(() => setLastDeleted((cur) => (cur?.set.id === removed.id ? null : cur)), 6000);
   };
 
@@ -762,15 +773,30 @@ export default function SwolleyMammoths() {
     if (!lastDeleted) return;
     setData((d) => ({
       ...d,
-      workouts: d.workouts.map((w) => (w.date === lastDeleted.date ? { ...w, sets: [...w.sets, lastDeleted.set] } : w)),
+      workouts: d.workouts.map((w) => (w.id === lastDeleted.workoutId ? { ...w, sets: [...w.sets, lastDeleted.set] } : w)),
     }));
     setLastDeleted(null);
   };
 
   /* §8.1 — edit an already-logged set (weight/reps/timing/note/flags)
-     without deleting and re-entering it */
-  const updateSet = (setId, patch) =>
-    updateSession((w) => ({ ...w, sets: w.sets.map((s) => (s.id === setId ? { ...s, ...patch } : s)) }));
+     without deleting and re-entering it. Also not date-scoped, for the
+     same reason as deleteSet above. */
+  const updateSet = (workoutId, setId, patch) =>
+    setData((d) => ({
+      ...d,
+      workouts: d.workouts.map((w) => (w.id === workoutId ? { ...w, sets: w.sets.map((s) => (s.id === setId ? { ...s, ...patch } : s)) } : w)),
+    }));
+
+  /* delete an entire past session — a heavier action than one set, so
+     it confirms first, matching the app's other irreversible actions
+     (JSON import, deleting a goal) */
+  const deleteWorkout = (workoutId) => {
+    const w = data.workouts.find((x) => x.id === workoutId);
+    if (!w) return;
+    const n = w.sets.length;
+    if (!window.confirm(`Delete the ${prettyDate(w.date)} session (${n} set${n === 1 ? "" : "s"})? This can't be undone.`)) return;
+    setData((d) => ({ ...d, workouts: d.workouts.filter((x) => x.id !== workoutId) }));
+  };
 
   /* §6.1 step 4 — one tap logs the whole warmup ramp, each set
      pre-tagged so it never pollutes analysis */
@@ -1152,7 +1178,7 @@ export default function SwolleyMammoths() {
                     <span className="row__e1">
                       {mode === "timed" ? mmss(s.seconds) : round1(setScore(s, openEx, unit, bodyweight))}
                     </span>
-                    <span className="row__x" onClick={(e) => { e.stopPropagation(); deleteSet(s.id); }} aria-label="delete set">×</span>
+                    <span className="row__x" onClick={(e) => { e.stopPropagation(); deleteSet(session.id, s.id); }} aria-label="delete set">×</span>
                     {s.note && <div className="row__note">{s.note}</div>}
                   </button>
                 );
@@ -1234,7 +1260,8 @@ export default function SwolleyMammoths() {
             <EditSetSheet
               set={todaySets.find((s) => s.id === editingSetId)}
               ex={openEx} unit={unit} spec={spec}
-              onSave={(id, patch) => { updateSet(id, patch); setEditingSetId(null); }}
+              onSave={(id, patch) => { updateSet(session.id, id, patch); setEditingSetId(null); }}
+              onDelete={(id) => { deleteSet(session.id, id); setEditingSetId(null); }}
               onClose={() => setEditingSetId(null)}
             />
           )}
@@ -1677,8 +1704,12 @@ export default function SwolleyMammoths() {
               return (
                 <div className="sesh" key={w.id}>
                   <div className="sesh__hd">
-                    <span className="sesh__date">{prettyDate(w.date)}</span>
-                    <span className="sesh__vol">{w.planName || "Freestyle"}</span>
+                    <span>
+                      <span className="sesh__date">{prettyDate(w.date)}</span>
+                      {" · "}
+                      <span className="sesh__vol">{w.planName || "Freestyle"}</span>
+                    </span>
+                    <button className="sesh__del" onClick={() => deleteWorkout(w.id)} aria-label="delete session" title="Delete session">×</button>
                   </div>
                   {Object.entries(byEx).map(([exId, sets]) => {
                     const ex = exById(exId);
@@ -1691,7 +1722,11 @@ export default function SwolleyMammoths() {
                           {subFrom && <span className="sesh__sub">sub for {subFrom.name}</span>}
                         </div>
                         <div className="sesh__sets">
-                          {sets.map((s) => <span className="chip" key={s.id}>{setLabel(s, ex, unit)}</span>)}
+                          {sets.map((s) => (
+                            <button className="chip" key={s.id} onClick={() => setEditingHistSet({ workoutId: w.id, setId: s.id })}>
+                              {setLabel(s, ex, unit)}
+                            </button>
+                          ))}
                         </div>
                       </div>
                     );
@@ -1705,6 +1740,28 @@ export default function SwolleyMammoths() {
           </>
         )}
       </main>
+
+      {editingHistSet && (() => {
+        const w = data.workouts.find((x) => x.id === editingHistSet.workoutId);
+        const s = w?.sets.find((x) => x.id === editingHistSet.setId);
+        const ex = s && exById(s.exerciseId);
+        if (!w || !s || !ex) return null;
+        return (
+          <EditSetSheet
+            set={s} ex={ex} unit={unit} spec={spec}
+            onSave={(id, patch) => { updateSet(w.id, id, patch); setEditingHistSet(null); }}
+            onDelete={(id) => { deleteSet(w.id, id); setEditingHistSet(null); }}
+            onClose={() => setEditingHistSet(null)}
+          />
+        );
+      })()}
+
+      {lastDeleted && (
+        <div className="undotoast">
+          <span>Set deleted.</span>
+          <button onClick={undoDelete}>Undo</button>
+        </div>
+      )}
 
       <nav className="nav">
         {[["today","Today"],["plans","Plans"],["coach","Coach"],["lifts","Lifts"],["history","History"]].map(([k, l]) => (
@@ -1987,7 +2044,8 @@ const CSS = `
 .lift__d.up{color:var(--gold);} .lift__d.down{color:var(--dim);}
 
 .sesh{padding:16px 0;border-bottom:1px solid var(--line);}
-.sesh__hd{display:flex;justify-content:space-between;font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;color:var(--dim);}
+.sesh__hd{display:flex;justify-content:space-between;align-items:center;font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;color:var(--dim);}
+.sesh__del{color:var(--dim);font-size:15px;line-height:1;padding:2px 0 2px 10px;}
 .sesh__date{color:var(--chalk);}
 .sesh__ex{margin-top:12px;}
 .sesh__exname{font-size:13.5px;font-weight:550;}
@@ -2016,6 +2074,7 @@ const CSS = `
 .sheet__input{flex:1;min-width:0;background:#1A1D22;border:1px solid var(--line);border-radius:6px;padding:11px;color:var(--chalk);font-size:14px;}
 .sheet__sel{background:#1A1D22;border:1px solid var(--line);border-radius:6px;color:var(--chalk);font-size:12px;padding:0 6px;}
 .sheet__addb{padding:11px 15px;background:var(--chalk);color:#1A1D22;border-radius:6px;font-weight:600;font-size:14px;}
+.sheet__del{margin-top:8px;padding:11px 15px;background:transparent;color:var(--red);border:1px solid var(--line);border-radius:6px;font-weight:600;font-size:14px;}
 
 .hero{width:100%;text-align:left;display:block;padding:14px 16px;border-radius:10px;margin-bottom:14px;border:1px solid var(--line);background:var(--raised);border-left:3px solid var(--dim);}
 .hero--red{border-left-color:var(--red);}
