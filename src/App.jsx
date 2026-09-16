@@ -550,6 +550,10 @@ export default function SwolleyMammoths() {
   const [armingGoalId, setArmingGoalId] = useState(null);
   const [planCritique, setPlanCritique] = useState(null);
   const [editingSetId, setEditingSetId] = useState(null);
+  const [bwEditing, setBwEditing] = useState(false);
+  const [bwDraft, setBwDraft] = useState("");
+  const bwInputRef = useRef(null);
+  useEffect(() => { if (bwEditing && bwInputRef.current) bwInputRef.current.select(); }, [bwEditing]);
   const [editingHistSet, setEditingHistSet] = useState(null); // { workoutId, setId } — History tab
   const [lastDeleted, setLastDeleted] = useState(null);
   const [rest, setRest] = useState(null); // { endAt, total } | null
@@ -987,6 +991,17 @@ export default function SwolleyMammoths() {
 
   const deleteBodyweightEntry = (date) =>
     setData((d) => ({ ...d, bodyweightLog: (d.bodyweightLog || []).filter((e) => e.date !== date) }));
+
+  /* tap-to-type on the bodyweight card itself — the +/- stepper alone
+     meant getting from nothing to your actual weight took dozens of
+     taps; this types it directly, same interaction as every other
+     numeric field in the app, and it still lands as today's dated
+     entry through the same logBodyweight() as the +/- buttons. */
+  const commitBW = () => {
+    const n = parseFloat(bwDraft);
+    if (!isNaN(n) && n > 0) logBodyweight(round1(n));
+    setBwEditing(false);
+  };
 
   /* feeds coachInsights' consistency check — without this set, the
      app has no denominator to compare actual sessions/week against */
@@ -1693,7 +1708,15 @@ export default function SwolleyMammoths() {
               </div>
               <div className="bw__ctl">
                 <button onClick={() => logBodyweight(Math.max(0, round1(bodyweight - (unit === "kg" ? 0.5 : 1))))}>−</button>
-                <span className="bw__v">{bodyweight || "—"}<i>{unit}</i></span>
+                {bwEditing ? (
+                  <input ref={bwInputRef} className="bw__input" type="number" inputMode="decimal"
+                    value={bwDraft} onChange={(e) => setBwDraft(e.target.value)}
+                    onBlur={commitBW} onKeyDown={(e) => e.key === "Enter" && commitBW()} />
+                ) : (
+                  <button className="bw__v" onClick={() => { setBwDraft(bodyweight ? String(bodyweight) : ""); setBwEditing(true); }}>
+                    {bodyweight || "—"}<i>{unit}</i>
+                  </button>
+                )}
                 <button onClick={() => logBodyweight(round1((bodyweight || (unit === "kg" ? 70 : 155)) + (unit === "kg" ? 0.5 : 1)))}>+</button>
               </div>
             </div>
@@ -2096,6 +2119,8 @@ const CSS = `
 .bw__ctl button{width:34px;height:34px;border-radius:6px;background:#2C313A;font-size:19px;line-height:1;}
 .bw__v{font-family:var(--mono);font-size:19px;min-width:58px;text-align:center;}
 .bw__v i{font-size:10px;color:var(--dim);font-style:normal;margin-left:1px;}
+.bw__input{font-family:var(--mono);font-size:19px;min-width:58px;width:58px;text-align:center;background:transparent;border:none;border-bottom:1px solid var(--gold);color:var(--gold);}
+.bw__input::-webkit-outer-spin-button,.bw__input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0;}
 .bwtrend{display:flex;align-items:center;gap:10px;width:100%;padding:11px 15px;background:var(--raised);border:1px solid var(--line);border-radius:9px;margin-bottom:16px;margin-top:-8px;}
 .bwtrend__d{font-family:var(--mono);font-size:12px;min-width:44px;}
 .bwtrend__d.up{color:var(--gold);} .bwtrend__d.down{color:var(--dim);}
